@@ -1,5 +1,3 @@
----
-
 # 📘 **README — Installing TP-Link Archer T3U Nano WiFi on Unitree Go2-W (Ubuntu 22 / Jetson Orin NX)**
 
 This guide explains how to install the TP-Link Archer T3U Nano USB WiFi adapter (RTL88x2BU chipset) on the **Unitree Go2-W**, connect to WiFi, and enable permanent static IP & SSH access.
