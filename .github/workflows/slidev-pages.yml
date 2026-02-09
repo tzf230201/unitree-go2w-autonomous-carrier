@@ -1,4 +1,4 @@
-git config --global user.name "Your Name"name: Deploy Slidev to GitHub Pages
+name: Deploy Slidev to GitHub Pages
 
 on:
   push:
