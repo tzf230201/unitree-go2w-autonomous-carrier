@@ -17,10 +17,16 @@ http://192.168.0.90:6080/vnc.html
 
 ### in case using LAN cable
 https://techshare.co.jp/faq/unitree/unitree-go2_pc_lan.html#1-1_Docking_Station
+in this case i'm using 192.168.123.163
 
 ### in case using Wifi Adapter
 https://github.com/tzf230201/unitree-go2w-autonomous-carrier/tree/main/wifi_adapter
 
+### VSCode setup
+1. install remote development extention
+2. ctrl+shift+p
+3. Remote-SSH: Connect to Host…
+4. ssh unitree@192.168.123.18 
 
 ## Development
 
