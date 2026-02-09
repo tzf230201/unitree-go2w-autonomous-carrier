@@ -1,0 +1,12 @@
+# Node/Slidev
+node_modules/
+
+# Slidev build outputs
+dist/
+.slidev/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
