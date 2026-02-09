@@ -59,7 +59,7 @@ https://techshare.co.jp/faq/unitree/go2_xt16_foxy.html
 ### how to run
 
 ```
-cd foxy_ws
+cd go2w_ws
 source install/setup.bash
 ros2 run hesai_ros_driver hesai_ros_driver_node
 ```
