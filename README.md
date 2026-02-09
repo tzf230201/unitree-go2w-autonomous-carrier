@@ -12,4 +12,19 @@ https://github.com/anh0001/ubuntu-novnc-quickstart
 http://192.168.0.90:6080/vnc.html
 
 
+## Development
+
+### teleop
+https://techshare.co.jp/faq/unitree/unitree-go_cmd_vel_control.html
+
+or basically:
+ros2 run unitree_ros2_example cmd_vel_control
+ros2 run teleop_twist_keyboard teleop_twist_keyboard
+
+colcon build --packages-select unitree_ros2_example
+
+### XT16 Lidar
+https://techshare.co.jp/faq/unitree/xt16-on-go2_d-lio.html
+
+
 
