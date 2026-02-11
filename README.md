@@ -17,7 +17,7 @@ http://192.168.0.90:6080/vnc.html
 
 ### in case using LAN cable
 https://techshare.co.jp/faq/unitree/unitree-go2_pc_lan.html#1-1_Docking_Station
-in this case i'm using 192.168.123.164
+in this case i'm using 192.168.123.163
 
 ### in case using Wifi Adapter
 https://github.com/tzf230201/unitree-go2w-autonomous-carrier/tree/main/wifi_adapter
@@ -30,6 +30,9 @@ https://github.com/tzf230201/unitree-go2w-autonomous-carrier/tree/main/wifi_adap
 5. export DISPLAY=192.168.123.164:0.0
 
 ## Development
+
+datasheet:
+https://support.unitree.com/home/en/Go2-W_developer/about_Go2-W
 
 ### teleop
 https://techshare.co.jp/faq/unitree/unitree-go_cmd_vel_control.html
@@ -68,6 +71,11 @@ ros2 run hesai_ros_driver hesai_ros_driver_node
 # d-lio
 https://techshare.co.jp/faq/unitree/xt16-on-go2_d-lio.html
 
+
+# Acknowledgement:
+
+the go2w_joints_state_publisher is modified by this:
+https://github.com/felixokolo/go2_slam_2d_3d/tree/main/src/go2_joints_state_publisher
 
 
 

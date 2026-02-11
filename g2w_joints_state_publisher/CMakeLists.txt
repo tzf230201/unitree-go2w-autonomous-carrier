@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.5)
-project(go2_joints_state_publisher)
+project(g2w_joints_state_publisher)
 
 # Find dependencies
 find_package(ament_cmake REQUIRED)

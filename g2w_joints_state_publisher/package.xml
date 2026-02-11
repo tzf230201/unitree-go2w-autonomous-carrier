@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <package format="3">
-  <name>go2_joints_state_publisher</name>
+  <name>g2w_joints_state_publisher</name>
   <version>0.0.0</version>
   <description>Node to publish o2 joint states for RVIZ</description>
 

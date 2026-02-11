@@ -1,7 +1,7 @@
 #ifndef GO2JOINTSTATEPUBLISHER
 #define GO2JOINTSTATEPUBLISHER
 
-#define NUM_OF_JOINTS 12
+#define NUM_OF_JOINTS 16
 #define FREQ_DIV 1
 
 #include <stdio.h>
@@ -40,6 +40,12 @@ private:
     int64_t nanosec;
     int freqDivCount;
 
+    // Index mapping for LowState motor_state
+    // FR_0->0, FR_1->1, FR_2->2
+    // FL_0->3, FL_1->4, FL_2->5
+    // RR_0->6, RR_1->7, RR_2->8
+    // RL_0->9, RL_1->10, RL_2->11
+    // FR_Wheel->12, FL_Wheel->13, RR_Wheel->14, RL_Wheel->15
     std::string jointNames[NUM_OF_JOINTS] = {
     "FR_hip_joint",
     "FR_thigh_joint",
@@ -52,7 +58,11 @@ private:
     "RR_calf_joint",
     "RL_hip_joint",
     "RL_thigh_joint",
-    "RL_calf_joint"
+    "RL_calf_joint",
+    "FR_foot_joint",
+    "FL_foot_joint",
+    "RR_foot_joint",
+    "RL_foot_joint"
     };
 
     double jointPositions[NUM_OF_JOINTS];
