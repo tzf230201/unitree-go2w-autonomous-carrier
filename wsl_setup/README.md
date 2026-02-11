@@ -198,5 +198,89 @@ With GUI (WSLg):
 
 ```bash
 gz sim -v 4 /usr/share/gz/gz-sim8/worlds/empty.sdf
+
+## 4) Connect WSL2 ROS 2 to Unitree robot (CycloneDDS)
+
+WSL2 can ping the robot but DDS discovery often fails unless network and firewall
+rules allow inbound UDP and the robot can reach the WSL IP. The steps below are
+the minimal setup that worked reliably.
+
+### 4.1 Ensure WSL2 is on the robot subnet
+
+Use Windows 11 mirrored networking so WSL gets an IP on the same subnet as the robot.
+
+Create or edit `%UserProfile%\.wslconfig` in Windows:
+
+```ini
+[wsl2]
+networkingMode=mirrored
 ```
+
+Then run (PowerShell):
+
+```powershell
+wsl --shutdown
+```
+
+After reopening WSL, confirm you get an IP like `192.168.123.x`:
+
+```bash
+ifconfig
+```
+
+### 4.2 Allow inbound ICMP + DDS UDP on Windows
+
+Even with mirrored networking, Windows Firewall can block inbound traffic to WSL.
+Run these in **PowerShell as Administrator**:
+
+```powershell
+netsh advfirewall firewall add rule name="WSL ICMPv4 In" dir=in action=allow protocol=icmpv4
+netsh advfirewall firewall add rule name="WSL ROS2 UDP In" dir=in action=allow protocol=udp localport=7400-7600
+```
+
+Verify the robot can ping the WSL IP.
+
+### 4.3 Configure CycloneDDS peers (two-way)
+
+Set explicit peers on both sides to avoid multicast discovery issues in WSL2.
+
+WSL config (this repo): [cyclonedds_ws/cyclonedds.xml](cyclonedds_ws/cyclonedds.xml)
+
+```xml
+<Discovery>
+	<Peers>
+		<Peer address="192.168.123.18"/>
+	</Peers>
+</Discovery>
+```
+
+Robot config: add the WSL IP as a peer (example `192.168.123.164`).
+
+```xml
+<Discovery>
+	<Peers>
+		<Peer address="192.168.123.164"/>
+	</Peers>
+</Discovery>
+```
+
+If the robot only reads its DDS config at startup, **reboot the robot** after
+changing the file.
+
+### 4.4 Run ROS 2 from WSL
+
+```bash
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export ROS_DOMAIN_ID=0
+export ROS_LOCALHOST_ONLY=0
+export CYCLONEDDS_URI=file:///home/teuku/go2w_ws/cyclonedds_ws/cyclonedds.xml
+
+source /home/teuku/go2w_ws/install/setup.bash
+ros2 daemon stop
+ros2 daemon start
+ros2 topic list
+```
+```
+
+
 
