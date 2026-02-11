@@ -16,7 +16,9 @@ find_package(sensor_msgs REQUIRED)
 set(_unitree_go_include_dir "")
 
 # Prefer build-generated headers (non-empty).
-if (EXISTS "$ENV{HOME}/go2w_ws/unitree_ros2/build/unitree_go/rosidl_generator_cpp/unitree_go/msg/low_cmd.hpp")
+if (EXISTS "$ENV{HOME}/go2w_ws/build/unitree_go/rosidl_generator_cpp/unitree_go/msg/low_cmd.hpp")
+  set(_unitree_go_include_dir "$ENV{HOME}/go2w_ws/build/unitree_go/rosidl_generator_cpp")
+elseif (EXISTS "$ENV{HOME}/go2w_ws/unitree_ros2/build/unitree_go/rosidl_generator_cpp/unitree_go/msg/low_cmd.hpp")
   set(_unitree_go_include_dir "$ENV{HOME}/go2w_ws/unitree_ros2/build/unitree_go/rosidl_generator_cpp")
 endif()
 
@@ -42,19 +44,31 @@ if (NOT _unitree_go_include_dir)
 endif()
 
 if (NOT _unitree_go_include_dir)
-  message(FATAL_ERROR "unitree_go headers not found. Source unitree_ros2/install/setup.bash before building.")
+  message(FATAL_ERROR "unitree_go headers not found. Source the workspace that installs unitree_go before building.")
 endif()
 
 # Resolve unitree_go C++ typesupport library for linking.
 set(_unitree_go_typesupport_lib "")
-if (EXISTS "$ENV{HOME}/go2w_ws/unitree_ros2/build/unitree_go/libunitree_go__rosidl_typesupport_cpp.so")
+if (EXISTS "$ENV{HOME}/go2w_ws/build/unitree_go/libunitree_go__rosidl_typesupport_cpp.so")
+  set(_unitree_go_typesupport_lib "$ENV{HOME}/go2w_ws/build/unitree_go/libunitree_go__rosidl_typesupport_cpp.so")
+elseif (EXISTS "$ENV{HOME}/go2w_ws/unitree_ros2/build/unitree_go/libunitree_go__rosidl_typesupport_cpp.so")
   set(_unitree_go_typesupport_lib "$ENV{HOME}/go2w_ws/unitree_ros2/build/unitree_go/libunitree_go__rosidl_typesupport_cpp.so")
-elseif (EXISTS "$ENV{HOME}/go2w_ws/unitree_ros2/install/unitree_go/lib/libunitree_go__rosidl_typesupport_cpp.so")
-  set(_unitree_go_typesupport_lib "$ENV{HOME}/go2w_ws/unitree_ros2/install/unitree_go/lib/libunitree_go__rosidl_typesupport_cpp.so")
+else()
+  # Fall back to CMAKE_PREFIX_PATH for installed library.
+  set(_prefix_list "${CMAKE_PREFIX_PATH}")
+  if (NOT _prefix_list AND DEFINED ENV{CMAKE_PREFIX_PATH})
+    string(REPLACE ":" ";" _prefix_list "$ENV{CMAKE_PREFIX_PATH}")
+  endif()
+  foreach(_prefix ${_prefix_list})
+    if (EXISTS "${_prefix}/lib/libunitree_go__rosidl_typesupport_cpp.so")
+      set(_unitree_go_typesupport_lib "${_prefix}/lib/libunitree_go__rosidl_typesupport_cpp.so")
+      break()
+    endif()
+  endforeach()
 endif()
 
 if (NOT _unitree_go_typesupport_lib)
-  message(FATAL_ERROR "unitree_go typesupport library not found. Build unitree_ros2 or check install path.")
+  message(FATAL_ERROR "unitree_go typesupport library not found. Build unitree_go or check install path.")
 endif()
 
 
