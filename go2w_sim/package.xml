@@ -11,6 +11,7 @@
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
 
+  <exec_depend>go2w_description</exec_depend>
   <exec_depend>robot_state_publisher</exec_depend>
 
   <exec_depend>ros_gz_sim</exec_depend>

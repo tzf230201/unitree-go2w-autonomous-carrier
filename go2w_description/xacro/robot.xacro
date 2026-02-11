@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<robot name="go2w_description" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+    <!-- Import sensor definitions -->
+    <xacro:include filename="$(find go2w_description)/xacro/sensors.xacro"/>
+
+    <!-- Add lidar sensor -->
+    <xacro:arg name="add_lidar" default="true"/>
+
+    <!-- Include base URDF -->
+    <xacro:include filename="$(find go2w_description)/urdf/go2w_description.urdf"/>
+
+    <!-- Add XT16 Lidar if enabled -->
+    <xacro:if value="$(arg add_lidar)">
+        <xacro:utlidar_sensor parent_link="base"/>
+    </xacro:if>
+
+</robot>

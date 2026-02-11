@@ -1,0 +1,52 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+    <xacro:include filename="$(find go2w_description)/xacro/const.xacro"/>
+
+    <!-- XT16 Unitree Lidar (Hesai) -->
+    <xacro:macro name="utlidar_sensor" params="parent_link">
+        
+        <link name="utlidar_lidar">
+            <inertial>
+                <origin xyz="0 0 0" rpy="0 0 0" />
+                <mass value="${lidar_mass}" />
+                <inertia 
+                    ixx="0.0001" ixy="0" ixz="0" 
+                    iyy="0.0001" iyz="0" 
+                    izz="0.0001" />
+            </inertial>
+            <visual>
+                <origin xyz="0 0 0" rpy="0 0 0" />
+                <geometry>
+                    <cylinder radius="${lidar_radius}" length="${lidar_height}" />
+                </geometry>
+                <material name="lidar_material">
+                    <color rgba="0.2 0.2 0.2 1.0" />
+                </material>
+            </visual>
+            <collision>
+                <origin xyz="0 0 0" rpy="0 0 0" />
+                <geometry>
+                    <cylinder radius="${lidar_radius}" length="${lidar_height}" />
+                </geometry>
+            </collision>
+        </link>
+
+        <joint name="utlidar_joint" type="fixed">
+            <origin xyz="${lidar_offset_x} ${lidar_offset_y} ${lidar_offset_z}" rpy="0 0 0" />
+            <parent link="${parent_link}" />
+            <child link="utlidar_lidar" />
+        </joint>
+
+        <!-- Lidar optical frame (for point cloud data) -->
+        <link name="utlidar_optical_frame" />
+        
+        <joint name="utlidar_optical_joint" type="fixed">
+            <origin xyz="0 0 0" rpy="-1.5707963267948966 0 -1.5707963267948966" />
+            <parent link="utlidar_lidar" />
+            <child link="utlidar_optical_frame" />
+        </joint>
+
+    </xacro:macro>
+
+</robot>

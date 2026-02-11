@@ -1,0 +1,91 @@
+<?xml version="1.0"?>
+<robot name="go2w_description" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+    <!-- Import sensor definitions -->
+    <xacro:include filename="$(find go2w_description)/xacro/sensors.xacro"/>
+
+    <!-- Add lidar sensor -->
+    <xacro:arg name="add_lidar" default="true"/>
+    
+    <!-- Standing configuration for legs -->
+    <xacro:property name="standing_hip" value="0.0"/>
+    <xacro:property name="standing_thigh" value="0.8"/>
+    <xacro:property name="standing_calf" value="-1.5"/>
+
+    <!-- Include base URDF -->
+    <xacro:include filename="$(find go2w_description)/urdf/go2w_description.urdf"/>
+
+    <!-- Override leg joints to fixed with standing positions -->
+    <!-- This makes the robot stable for wheeled navigation -->
+    
+    <!-- Front Left Leg -->
+    <xacro:property name="FL_hip_fixed" value="${standing_hip}"/>
+    <xacro:property name="FL_thigh_fixed" value="${standing_thigh}"/>
+    <xacro:property name="FL_calf_fixed" value="${standing_calf}"/>
+    
+    <!-- Front Right Leg -->
+    <xacro:property name="FR_hip_fixed" value="${standing_hip}"/>
+    <xacro:property name="FR_thigh_fixed" value="${standing_thigh}"/>
+    <xacro:property name="FR_calf_fixed" value="${standing_calf}"/>
+    
+    <!-- Rear Left Leg -->
+    <xacro:property name="RL_hip_fixed" value="${standing_hip}"/>
+    <xacro:property name="RL_thigh_fixed" value="${standing_thigh}"/>
+    <xacro:property name="RL_calf_fixed" value="${standing_calf}"/>
+    
+    <!-- Rear Right Leg -->
+    <xacro:property name="RR_hip_fixed" value="${standing_hip}"/>
+    <xacro:property name="RR_thigh_fixed" value="${standing_thigh}"/>
+    <xacro:property name="RR_calf_fixed" value="${standing_calf}"/>
+
+    <!-- Add XT16 Lidar if enabled -->
+    <xacro:if value="$(arg add_lidar)">
+        <xacro:utlidar_sensor parent_link="base"/>
+    </xacro:if>
+
+    <!-- Gazebo initial positions for joints -->
+    <gazebo reference="FL_hip_joint">
+        <preserveFixedJoint>false</preserveFixedJoint>
+        <initial_position>${FL_hip_fixed}</initial_position>
+    </gazebo>
+    <gazebo reference="FL_thigh_joint">
+        <initial_position>${FL_thigh_fixed}</initial_position>
+    </gazebo>
+    <gazebo reference="FL_calf_joint">
+        <initial_position>${FL_calf_fixed}</initial_position>
+    </gazebo>
+
+    <gazebo reference="FR_hip_joint">
+        <preserveFixedJoint>false</preserveFixedJoint>
+        <initial_position>${FR_hip_fixed}</initial_position>
+    </gazebo>
+    <gazebo reference="FR_thigh_joint">
+        <initial_position>${FR_thigh_fixed}</initial_position>
+    </gazebo>
+    <gazebo reference="FR_calf_joint">
+        <initial_position>${FR_calf_fixed}</initial_position>
+    </gazebo>
+
+    <gazebo reference="RL_hip_joint">
+        <preserveFixedJoint>false</preserveFixedJoint>
+        <initial_position>${RL_hip_fixed}</initial_position>
+    </gazebo>
+    <gazebo reference="RL_thigh_joint">
+        <initial_position>${RL_thigh_fixed}</initial_position>
+    </gazebo>
+    <gazebo reference="RL_calf_joint">
+        <initial_position>${RL_calf_fixed}</initial_position>
+    </gazebo>
+
+    <gazebo reference="RR_hip_joint">
+        <preserveFixedJoint>false</preserveFixedJoint>
+        <initial_position>${RR_hip_fixed}</initial_position>
+    </gazebo>
+    <gazebo reference="RR_thigh_joint">
+        <initial_position>${RR_thigh_fixed}</initial_position>
+    </gazebo>
+    <gazebo reference="RR_calf_joint">
+        <initial_position>${RR_calf_fixed}</initial_position>
+    </gazebo>
+
+</robot>
