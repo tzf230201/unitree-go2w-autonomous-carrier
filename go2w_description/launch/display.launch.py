@@ -37,6 +37,12 @@ def generate_launch_description():
             parameters=[{"robot_description": robot_description}],
         ),
         Node(
+            package="go2_joints_state_publisher",
+            executable="go2_joints_state_publisher_node",
+            name="go2_joints_state_publisher",
+            output="screen",
+        ),
+        Node(
             package="rviz2",
             executable="rviz2",
             name="rviz2",
