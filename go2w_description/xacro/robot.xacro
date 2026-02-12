@@ -10,9 +10,9 @@
     <!-- Include base URDF -->
     <xacro:include filename="$(find go2w_description)/urdf/go2w_description.urdf"/>
 
-    <!-- Add XT16 Lidar if enabled -->
+    <!-- Add Hesai lidar frame if enabled -->
     <xacro:if value="$(arg add_lidar)">
-        <xacro:utlidar_sensor parent_link="base"/>
+        <xacro:hesai_lidar_sensor parent_link="base_link"/>
     </xacro:if>
 
 </robot>

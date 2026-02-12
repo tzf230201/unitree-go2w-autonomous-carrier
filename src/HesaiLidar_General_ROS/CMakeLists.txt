@@ -115,10 +115,20 @@ target_link_libraries(hesai_lidar_node
     ${Boost_SYSTEM_LIBRARY}
     PandarGeneralSDK
 )
+set_target_properties(hesai_lidar_node PROPERTIES
+  BUILD_RPATH "$ORIGIN/.."
+  INSTALL_RPATH "$ORIGIN/.."
+)
 
 rosidl_target_interfaces(hesai_lidar_node  ${PROJECT_NAME} "rosidl_typesupport_cpp")
+install(TARGETS
+  PandarGeneral
+  PandarGeneralSDK
+  LIBRARY DESTINATION lib
+  ARCHIVE DESTINATION lib
+)
 install(TARGETS hesai_lidar_node
-  DESTINATION lib/${PROJECT_NAME})
+  RUNTIME DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY launch
   DESTINATION share/${PROJECT_NAME})

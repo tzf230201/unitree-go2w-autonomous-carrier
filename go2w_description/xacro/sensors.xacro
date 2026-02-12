@@ -49,4 +49,33 @@
 
     </xacro:macro>
 
+    <!-- Hesai lidar frame compatible with go2_description -->
+    <xacro:macro name="hesai_lidar_sensor" params="parent_link">
+        <link name="hesai_lidar">
+            <inertial>
+                <origin xyz="0 0 0" rpy="0 0 0" />
+                <mass value="0" />
+                <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" />
+            </inertial>
+            <visual>
+                <origin xyz="0 0 0" rpy="0 0 0" />
+                <geometry>
+                    <cylinder radius="0.05" length="0.08" />
+                </geometry>
+            </visual>
+            <collision>
+                <origin xyz="0 0 0" rpy="0 0 0" />
+                <geometry>
+                    <cylinder radius="0.05" length="0.08" />
+                </geometry>
+            </collision>
+        </link>
+
+        <joint name="hesai_lidar_joint" type="fixed">
+            <origin xyz="0.145 0 0.11" rpy="0 0 0" />
+            <parent link="${parent_link}" />
+            <child link="hesai_lidar" />
+        </joint>
+    </xacro:macro>
+
 </robot>

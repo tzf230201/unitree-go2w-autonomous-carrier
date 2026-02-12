@@ -1,6 +1,6 @@
 <?xml version='1.0' encoding='utf-8'?>
 <robot name="go2w_description">
-  <link name="base">
+  <link name="base_link">
     <inertial>
       <origin xyz="0.021112 0 -0.005366" rpy="0 0 0" />
       <mass value="6.921" />
@@ -19,6 +19,14 @@
       </geometry>
     </collision>
   </link>
+  <link name="base_footprint" />
+
+  <joint name="base_footprint_link" type="fixed">
+    <origin xyz="0 0 0.3" rpy="0 0 0" />
+    <parent link="base_footprint" />
+    <child link="base_link" />
+  </joint>
+
   <link name="Head_upper">
     <inertial>
       <origin xyz="0 0 0" rpy="0 0 0" />
@@ -34,7 +42,7 @@
   </link>
   <joint name="Head_upper_joint" type="fixed" dont_collapse="true">
     <origin xyz="0.285 0 0.01" rpy="0 0 0" />
-    <parent link="base" />
+    <parent link="base_link" />
     <child link="Head_upper" />
     <axis xyz="0 0 0" />
   </joint>
@@ -78,7 +86,7 @@
   </link>
   <joint name="FL_hip_joint" type="revolute">
     <origin xyz="0.1934 0.0465 0" rpy="0 0 0" />
-    <parent link="base" />
+    <parent link="base_link" />
     <child link="FL_hip" />
     <axis xyz="1 0 0" />
     <limit lower="-1.0472" upper="1.0472" effort="23.7" velocity="30.1" />
@@ -244,7 +252,7 @@
   </link>
   <joint name="FR_hip_joint" type="revolute">
     <origin xyz="0.1934 -0.0465 0" rpy="0 0 0" />
-    <parent link="base" />
+    <parent link="base_link" />
     <child link="FR_hip" />
     <axis xyz="1 0 0" />
     <limit lower="-1.0472" upper="1.0472" effort="23.7" velocity="30.1" />
@@ -406,7 +414,7 @@
   </link>
   <joint name="RL_hip_joint" type="revolute">
     <origin xyz="-0.1934 0.0465 0" rpy="0 0 0" />
-    <parent link="base" />
+    <parent link="base_link" />
     <child link="RL_hip" />
     <axis xyz="1 0 0" />
     <limit lower="-1.0472" upper="1.0472" effort="23.7" velocity="30.1" />
@@ -569,7 +577,7 @@
   </link>
   <joint name="RR_hip_joint" type="revolute">
     <origin xyz="-0.1934 -0.0465 0" rpy="0 0 0" />
-    <parent link="base" />
+    <parent link="base_link" />
     <child link="RR_hip" />
     <axis xyz="1 0 0" />
     <limit lower="-1.0472" upper="1.0472" effort="23.7" velocity="30.1" />
@@ -718,7 +726,7 @@
   </link>
   <joint name="imu_joint" type="fixed">
     <origin xyz="-0.02557 0 0.04232" rpy="0 0 0" />
-    <parent link="base" />
+    <parent link="base_link" />
     <child link="imu" />
     <axis xyz="0 0 0" />
   </joint>
@@ -731,8 +739,34 @@
   </link>
   <joint name="radar_joint" type="fixed">
     <origin xyz="0.28945 0 -0.046825" rpy="0 2.8782 0" />
-    <parent link="base" />
+    <parent link="base_link" />
     <child link="radar" />
     <axis xyz="0 0 0" />
+  </joint>
+
+  <link name="hesai_lidar">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="0" />
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius="0.05" length="0.08" />
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius="0.05" length="0.08" />
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="hesai_lidar_joint" type="fixed">
+    <parent link="base_link" />
+    <child link="hesai_lidar" />
+    <origin xyz="0.145 0 0.11" rpy="0 0 0" />
   </joint>
 </robot>

@@ -22,10 +22,10 @@ def generate_launch_description():
                 {"publish_type"  : "both"},
                 {"timestamp_type"  : "realtime"},
                 {"data_type"  : ""},
-                {"lidar_correction_file"  : "/home/unitree/go2_nav2_setup/src/ROS/HesaiLidar_General_ROS/config/PandarXT-16.csv"},
+                {"lidar_correction_file"  : "/home/unitree/go2w_ws/src/unitree-go2w-autonomous-carrier/src/HesaiLidar_General_ROS/config/PandarXT-16.csv"},
                 {"multicast_ip"  : ""},
                 {"coordinate_correction_flag"  : False},
-                {"fixed_frame"  : ""},
+                {"fixed_frame"  : "map"},
                 {"target_frame_frame"  : ""}
             ]
         )

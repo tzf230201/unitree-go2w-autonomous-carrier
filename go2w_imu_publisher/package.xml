@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>go2w_imu_publisher</name>
+  <version>0.0.1</version>
+  <description>Publish sensor_msgs/Imu for LIO-SAM from Unitree Go2 lowstate IMU.</description>
+
+  <maintainer email="unitree@todo.todo">unitree</maintainer>
+  <license>TODO</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>unitree_go</depend>
+  <depend>unitree_api</depend>
+
+  <exec_depend>ros2launch</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
