@@ -82,8 +82,7 @@ PointCloudToLaserScanNode::PointCloudToLaserScanNode(const rclcpp::NodeOptions &
 
   using std::placeholders::_1;
   // if pointcloud target frame specified, we need to filter by transform availability
-  // if (!target_frame_.empty()) {
-    if (0) {
+  if (!target_frame_.empty()) {
     tf2_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
     auto timer_interface = std::make_shared<tf2_ros::CreateTimerROS>(
       this->get_node_base_interface(), this->get_node_timers_interface());

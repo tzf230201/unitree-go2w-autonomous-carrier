@@ -2,13 +2,13 @@
   ros__parameters:
 
     # Topics
-    pointCloudTopic: "points_raw"                   # Point cloud data
+    pointCloudTopic: "lidar_points"                   # Point cloud data
     imuTopic: "/imu_plugin/out"                        # IMU data
     odomTopic: "odometry/imu"                    # IMU pre-preintegration odometry, same frequency as IMU
     gpsTopic: "odometry/gpsz"                    # GPS odometry topic from navsat, see module_navsat.launch file
 
     # Frames
-    lidarFrame: "velodyne_base_link"
+    lidarFrame: "hesai_lidar"
     baselinkFrame: "base_footprint"
     odometryFrame: "odom"
     mapFrame: "map"

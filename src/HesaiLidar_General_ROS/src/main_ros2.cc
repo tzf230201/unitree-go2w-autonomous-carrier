@@ -40,7 +40,7 @@ public:
     this->declare_parameter<std::string>("target_frame", "");
     this->declare_parameter<std::string>("fixed_frame", "");
     rclcpp::QoS qos(rclcpp::KeepLast(7));
-    lidarPublisher = this->create_publisher<sensor_msgs::msg::PointCloud2>("rslidar_points", rclcpp::SensorDataQoS());
+    lidarPublisher = this->create_publisher<sensor_msgs::msg::PointCloud2>("lidar_points", rclcpp::SensorDataQoS());
     packetPublisher = this->create_publisher<hesai_lidar::msg::PandarScan>("pandar_packets", qos);
     this->timer_callback();
   }
