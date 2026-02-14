@@ -89,9 +89,11 @@ https://techshare.co.jp/faq/unitree/xt16-on-go2_d-lio.html
 
 # Acknowledgement:
 
-the go2w_joints_state_publisher is modified by this:
+the go2w_joints_state_publisher is modified from this:
+https://github.com/felixokolo/go2_slam_2d_3d.git
+especiallly this part:
 https://github.com/felixokolo/go2_slam_2d_3d/tree/main/src/go2_joints_state_publisher
 
-
-
+the go2w_cmd_vel_control is modified from this:
+https://github.com/TechShare-inc/go2_unitree_ros2.git
 
