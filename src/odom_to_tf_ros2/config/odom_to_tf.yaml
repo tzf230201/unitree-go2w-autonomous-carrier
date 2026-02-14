@@ -1,6 +1,9 @@
 odom_to_tf:
-    ros__parameters:
-        odom_topic: "/utlidar/robot_odom"
-        frame_id: ""
-        child_frame_id: "base_footprint"
-        use_sim_time: False
+  ros__parameters:
+    frame_id: "odom"
+    child_frame_id: "base_footprint"
+    odom_yaw_offset: 1.57079632679
+    odom_topic_1: "/lio_sam/mapping/odometry"
+    odom_topic_2: ""
+    pose_topic: ""
+    sport_mode_topic: ""

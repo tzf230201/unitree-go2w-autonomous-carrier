@@ -15,6 +15,8 @@
   <depend>rclcpp</depend>
   <depend>tf2_ros</depend>
   <depend>nav_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>unitree_go</depend>
 
   <export>
     <build_type>ament_cmake</build_type>

@@ -13,10 +13,11 @@ def generate_launch_description():
     desc_share = get_package_share_directory("go2w_description")
     hesai_share = get_package_share_directory("hesai_lidar")
     lio_sam_share = get_package_share_directory("lio_sam")
-    slam_toolbox_share = get_package_share_directory("slam_toolbox")
+    odom_to_tf_share = get_package_share_directory("odom_to_tf_ros2")
     urdf_path = os.path.join(desc_share, "urdf", "go2w_description.urdf")
     rviz_config_path = os.path.join(desc_share, "launch", "display_lio_sam.rviz")
     hesai_correction = os.path.join(hesai_share, "config", "PandarXT-16.csv")
+    odom_to_tf_params_path = os.path.join(odom_to_tf_share, "config", "odom_to_tf.yaml")
 
     with open(urdf_path, "r", encoding="utf-8") as f:
         robot_description = f.read()
@@ -26,6 +27,11 @@ def generate_launch_description():
             "rviz_config",
             default_value=rviz_config_path,
             description="Path to an RViz config (.rviz).",
+        ),
+        DeclareLaunchArgument(
+            "odom_to_tf_params",
+            default_value=odom_to_tf_params_path,
+            description="Path to odom_to_tf params YAML.",
         ),
         Node(
             package="go2w_description",
@@ -67,8 +73,8 @@ def generate_launch_description():
                 {"lidar_correction_file": hesai_correction},
                 {"multicast_ip": ""},
                 {"coordinate_correction_flag": False},
-                {"fixed_frame": "map"},
-                {"target_frame_frame": ""},
+                {"fixed_frame": ""},
+                {"target_frame": ""},
             ],
         ),
         Node(
@@ -83,16 +89,18 @@ def generate_launch_description():
             ],
         ),
         Node(
+            package="tf2_ros",
+            executable="static_transform_publisher",
+            name="map_to_odom_static",
+            arguments=["0", "0", "0", "0", "0", "0", "map", "odom"],
+            output="screen",
+        ),
+        Node(
             package="odom_to_tf_ros2",
             executable="odom_to_tf",
             name="odom_to_tf",
             output="screen",
-            parameters=[
-                {"frame_id": "odom"},
-                {"child_frame_id": "base_footprint"},
-                {"odom_topic_1": "/lio_sam/mapping/odometry"},
-                {"odom_topic_2": "/lio_sam/mapping/odometry_incremental"},
-            ],
+            parameters=[LaunchConfiguration("odom_to_tf_params")],
         ),
         Node(
             package="pointcloud_to_laserscan",
@@ -104,7 +112,7 @@ def generate_launch_description():
             ],
             parameters=[
                 {
-                    "target_frame": "hesai_lidar",
+                    "target_frame": "base_footprint",
                     "transform_tolerance": 0.01,
                     "min_height": -0.3,
                     "max_height": 3.0,
@@ -123,15 +131,7 @@ def generate_launch_description():
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(lio_sam_share, "launch", "run.launch.py")
-            )
-        ),
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                os.path.join(slam_toolbox_share, "launch", "online_async_launch.py")
             ),
-            launch_arguments={
-                "use_sim_time": "False",
-            }.items(),
         ),
         Node(
             package="rviz2",

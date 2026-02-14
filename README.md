@@ -2,15 +2,30 @@
 
 slide: https://tzf230201.github.io/unitree-go2w-autonomous-carrier/
 
-## remote via noVNC:
+## remote via NoMachine (recommended):
 
+NoMachine server is already installed on this robot (`nxserver`) and listens on port `4000`.
+
+### Connect from your laptop:
+1. Install NoMachine client.
+2. Create a new connection to one of robot IPs:
+   - `192.168.123.18` (LAN dock)
+   - `192.168.0.90` (Wi-Fi adapter)
+3. Port: `4000`
+4. Login with robot username/password (`unitree` user).
+
+### Check server on robot:
+```bash
+sudo systemctl status nxserver
+ss -tulpn | grep :4000
+```
+
+## legacy remote via noVNC (optional):
 ### Install NoVNC:
 https://github.com/anh0001/ubuntu-novnc-quickstart
 
-
 ### Open browser:
 http://192.168.0.90:6080/vnc.html
-
 
 
 ## Connect to PC
@@ -27,7 +42,7 @@ https://github.com/tzf230201/unitree-go2w-autonomous-carrier/tree/main/wifi_adap
 2. ctrl+shift+p
 3. Remote-SSH: Connect to Host…
 4. ssh unitree@192.168.123.18 
-5. export DISPLAY=192.168.123.164:0.0
+5. (optional) for `ssh -X` / `ssh -Y`, do not hardcode DISPLAY in `~/.bashrc`
 
 ## Development
 
@@ -76,7 +91,6 @@ https://techshare.co.jp/faq/unitree/xt16-on-go2_d-lio.html
 
 the go2w_joints_state_publisher is modified by this:
 https://github.com/felixokolo/go2_slam_2d_3d/tree/main/src/go2_joints_state_publisher
-
 
 
 

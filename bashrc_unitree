@@ -173,23 +173,26 @@ fi
 unset __conda_setup
 # <<< conda initialize <<<
 
-# --- RealSense/ROS GUI defaults for VNC and headless sessions ---
-# Set default DISPLAY to :1 (VNC display). Override by exporting DISPLAY before shell start.
-if [ -z "$DISPLAY" ]; then
-  export DISPLAY=:1
-fi
+# --- Optional TigerVNC/noVNC (disabled by default) ---
+# Enable only when needed:
+#   export ENABLE_TIGERVNC_AUTOSTART=1
+if [ "${ENABLE_TIGERVNC_AUTOSTART:-0}" = "1" ]; then
+  # --- RealSense/ROS GUI defaults for VNC/headless sessions ---
+  # Set default DISPLAY to :1 (VNC display) only in VNC mode.
+  if [ -z "$DISPLAY" ]; then
+    export DISPLAY=:1
+  fi
 
-# Force software rendering only on VNC/headless display :1
-if [ "$DISPLAY" = ":1" ]; then
-  export LIBGL_ALWAYS_SOFTWARE=1
-  export QT_XCB_FORCE_SOFTWARE_OPENGL=1
-fi
+  # Force software rendering only on VNC/headless display :1
+  if [ "$DISPLAY" = ":1" ]; then
+    export LIBGL_ALWAYS_SOFTWARE=1
+    export QT_XCB_FORCE_SOFTWARE_OPENGL=1
+  fi
 
-
-# --- Auto-start VNC + noVNC (web UI on :6080) ---
-# Starts a TigerVNC server on :1 (port 5901) and a noVNC/websockify proxy on :6080
-# Runs only if the respective ports are not already listening.
-{
+  # --- Auto-start VNC + noVNC (web UI on :6080) ---
+  # Starts a TigerVNC server on :1 (port 5901) and a noVNC/websockify proxy on :6080
+  # Runs only if the respective ports are not already listening.
+  {
   # Ensure required tools exist
   have_ss=$(command -v ss || true)
   novnc_proxy="$HOME/noVNC/utils/novnc_proxy"
@@ -222,4 +225,5 @@ fi
       fi
     fi
   fi
-} >/dev/null 2>&1
+  } >/dev/null 2>&1
+fi

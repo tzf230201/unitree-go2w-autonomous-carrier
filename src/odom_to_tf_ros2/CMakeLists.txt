@@ -13,6 +13,7 @@ find_package(rclcpp REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(unitree_go REQUIRED)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -26,9 +27,12 @@ if(BUILD_TESTING)
 endif()
 
 add_executable(odom_to_tf src/odom_to_tf.cpp)
-ament_target_dependencies(odom_to_tf rclcpp tf2_ros nav_msgs geometry_msgs)
+ament_target_dependencies(odom_to_tf rclcpp tf2_ros nav_msgs geometry_msgs unitree_go)
 
 install(TARGETS odom_to_tf
   DESTINATION lib/${PROJECT_NAME})
+
+install(DIRECTORY config
+  DESTINATION share/${PROJECT_NAME})
 
 ament_package()
