@@ -32,8 +32,16 @@ def main() -> None:
     except KeyboardInterrupt:
         pass
     finally:
-        node.destroy_node()
-        rclpy.shutdown()
+        # During launch shutdown the process may receive multiple SIGINTs.
+        # Make teardown best-effort to avoid spurious non-zero exit codes.
+        try:
+            node.destroy_node()
+        except Exception:
+            pass
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

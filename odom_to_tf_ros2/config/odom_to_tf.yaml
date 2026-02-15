@@ -2,6 +2,8 @@ odom_to_tf:
   ros__parameters:
     frame_id: "odom"
     child_frame_id: "base_footprint"
+    # Rotation applied to incoming odometry before publishing TF.
+    # If "moving forward" in RViz looks like moving sideways, this value is likely wrong.
     odom_yaw_offset: 1.57079632679
     odom_topic_1: "/lio_sam/mapping/odometry"
     odom_topic_2: ""
