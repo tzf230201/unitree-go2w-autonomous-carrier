@@ -1,6 +1,7 @@
 #include <memory>
 #include <chrono>
 #include <cmath>
+#include <mutex>
 
 #include <rclcpp/rclcpp.hpp>
 #include <nav_msgs/msg/odometry.hpp>
@@ -61,9 +62,16 @@ class OdomToTF : public rclcpp::Node {
                     sport_mode_topic, qos, std::bind(&OdomToTF::sportModeCallback, this, _1));
             }
             tfb_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
-            timer_ = this->create_wall_timer(
-                std::chrono::milliseconds(100),
-                std::bind(&OdomToTF::publishIdentityIfNoOdom, this));
+            // Re-publish the latest TF at a steady rate using node time.
+            // This prevents consumers (slam_toolbox, RViz) from dropping sensor messages due to
+            // "future extrapolation" when /odom arrives at a lower/irregular rate than /scan.
+            publish_tf_rate_hz_ = this->declare_parameter("publish_tf_rate_hz", 50.0);
+            if (publish_tf_rate_hz_ < 1.0) {
+                publish_tf_rate_hz_ = 1.0;
+            }
+            const auto period = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::duration<double>(1.0 / publish_tf_rate_hz_));
+            timer_ = this->create_wall_timer(period, std::bind(&OdomToTF::republishLatestTf, this));
         }
     private:
         std::string frame_id, child_frame_id;
@@ -79,6 +87,7 @@ class OdomToTF : public rclcpp::Node {
         bool initial_1 = true;
         bool initial_2 = true;
         bool have_odom_ = false;
+        double publish_tf_rate_hz_ = 50.0;
         double odom_yaw_offset_ = 0.0;
         double initial_corrected_x_ = 0.0;
         double initial_corrected_y_ = 0.0;
@@ -89,32 +98,45 @@ class OdomToTF : public rclcpp::Node {
         float sport_origin_x_ = 0.0f;
         float sport_origin_y_ = 0.0f;
         float sport_origin_z_ = 0.0f;
+        std::mutex tf_mutex_;
 
-        void publishIdentityIfNoOdom() {
-            if (have_odom_) {
-                return;
-            }
+        void republishLatestTf() {
             geometry_msgs::msg::TransformStamped tf;
+            {
+                std::lock_guard<std::mutex> lock(tf_mutex_);
+                if (have_odom_) {
+                    tf = tfs_;
+                } else {
+                    tf.header.frame_id = frame_id;
+                    tf.child_frame_id = child_frame_id;
+                    tf.transform.translation.x = 0.0;
+                    tf.transform.translation.y = 0.0;
+                    tf.transform.translation.z = 0.0;
+                    tf.transform.rotation.x = 0.0;
+                    tf.transform.rotation.y = 0.0;
+                    tf.transform.rotation.z = 0.0;
+                    tf.transform.rotation.w = 1.0;
+                }
+            }
             tf.header.stamp = this->now();
-            tf.header.frame_id = frame_id;
-            tf.child_frame_id = child_frame_id;
-            tf.transform.translation.x = 0.0;
-            tf.transform.translation.y = 0.0;
-            tf.transform.translation.z = 0.0;
-            tf.transform.rotation.x = 0.0;
-            tf.transform.rotation.y = 0.0;
-            tf.transform.rotation.z = 0.0;
-            tf.transform.rotation.w = 1.0;
             tfb_->sendTransform(tf);
         }
 
         void odomCallback_1(const nav_msgs::msg::Odometry::SharedPtr msg) {
-            have_odom_ = true;
-            tfs_.header = msg->header;
-            // Use the source message timestamp so TF exists at the same time as sensor data.
-            tfs_.header.stamp = msg->header.stamp;
-            tfs_.header.frame_id = frame_id != "" ? frame_id : tfs_.header.frame_id;
-            tfs_.child_frame_id = child_frame_id != "" ? child_frame_id : msg->child_frame_id;
+            {
+                std::lock_guard<std::mutex> lock(tf_mutex_);
+                have_odom_ = true;
+                tfs_.header = msg->header;
+            }
+            // Prefer the source message timestamp, but also broadcast with node time (below).
+            // In real systems, /scan and /odom stamps can be out of sync; broadcasting with
+            // node time helps message_filters in consumers like slam_toolbox.
+            {
+                std::lock_guard<std::mutex> lock(tf_mutex_);
+                tfs_.header.stamp = msg->header.stamp;
+                tfs_.header.frame_id = frame_id != "" ? frame_id : tfs_.header.frame_id;
+                tfs_.child_frame_id = child_frame_id != "" ? child_frame_id : msg->child_frame_id;
+            }
             const double c = std::cos(odom_yaw_offset_);
             const double s = std::sin(odom_yaw_offset_);
             const double corrected_x = c * msg->pose.pose.position.x - s * msg->pose.pose.position.y;
@@ -140,18 +162,26 @@ class OdomToTF : public rclcpp::Node {
                 initial_1 = false;
             }
 
-            tfs_.transform.translation.x = corrected_x - initial_corrected_x_;
-            tfs_.transform.translation.y = corrected_y - initial_corrected_y_;
-            tfs_.transform.translation.z = msg->pose.pose.position.z;
-
             tf2::Quaternion q_corrected;
             q_corrected.setRPY(0.0, 0.0, corrected_yaw - initial_corrected_yaw_);
-            tfs_.transform.rotation.x = q_corrected.x();
-            tfs_.transform.rotation.y = q_corrected.y();
-            tfs_.transform.rotation.z = q_corrected.z();
-            tfs_.transform.rotation.w = q_corrected.w();
+            {
+                std::lock_guard<std::mutex> lock(tf_mutex_);
+                tfs_.transform.translation.x = corrected_x - initial_corrected_x_;
+                tfs_.transform.translation.y = corrected_y - initial_corrected_y_;
+                tfs_.transform.translation.z = msg->pose.pose.position.z;
+                tfs_.transform.rotation.x = q_corrected.x();
+                tfs_.transform.rotation.y = q_corrected.y();
+                tfs_.transform.rotation.z = q_corrected.z();
+                tfs_.transform.rotation.w = q_corrected.w();
+            }
 
             tfb_->sendTransform(tfs_);
+
+            // Also broadcast at "now" so listeners can transform incoming sensor data even if
+            // upstream timestamps are skewed.
+            auto tfs_now = tfs_;
+            tfs_now.header.stamp = this->now();
+            tfb_->sendTransform(tfs_now);
         }
 
         void odomCallback_2(const nav_msgs::msg::Odometry::SharedPtr msg) {
@@ -271,6 +301,9 @@ class OdomToTF : public rclcpp::Node {
             tfs_.transform.translation.z = msg->pose.position.z - pose_origin_.position.z;
             tfs_.transform.rotation = msg->pose.orientation;
             tfb_->sendTransform(tfs_);
+            auto tfs_now = tfs_;
+            tfs_now.header.stamp = this->now();
+            tfb_->sendTransform(tfs_now);
         }
 
         void sportModeCallback(const unitree_go::msg::SportModeState::SharedPtr msg) {

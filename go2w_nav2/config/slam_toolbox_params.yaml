@@ -5,6 +5,7 @@ slam_toolbox:
     # Frames
     map_frame: map
     odom_frame: odom
+    # With /scan already in base_footprint, keep base_frame consistent with the robot base.
     base_frame: base_footprint
 
     # Inputs
@@ -18,10 +19,9 @@ slam_toolbox:
     transform_publish_period: 0.05
     map_update_interval: 2.0
     tf_buffer_duration: 30.0
+    transform_timeout: 1.0
 
     # Tuning (safe defaults)
     use_scan_matching: true
     use_scan_barycenter: true
-    scan_queue_size: 10
     throttle_scans: 1
-
