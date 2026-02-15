@@ -111,7 +111,8 @@ class OdomToTF : public rclcpp::Node {
         void odomCallback_1(const nav_msgs::msg::Odometry::SharedPtr msg) {
             have_odom_ = true;
             tfs_.header = msg->header;
-            tfs_.header.stamp = this->now();
+            // Use the source message timestamp so TF exists at the same time as sensor data.
+            tfs_.header.stamp = msg->header.stamp;
             tfs_.header.frame_id = frame_id != "" ? frame_id : tfs_.header.frame_id;
             tfs_.child_frame_id = child_frame_id != "" ? child_frame_id : msg->child_frame_id;
             const double c = std::cos(odom_yaw_offset_);
@@ -262,7 +263,7 @@ class OdomToTF : public rclcpp::Node {
                 pose_origin_ = msg->pose;
                 initial_pose_ = false;
             }
-            tfs_.header.stamp = this->now();
+            tfs_.header.stamp = msg->header.stamp;
             tfs_.header.frame_id = frame_id;
             tfs_.child_frame_id = child_frame_id;
             tfs_.transform.translation.x = msg->pose.position.x - pose_origin_.position.x;
@@ -280,6 +281,7 @@ class OdomToTF : public rclcpp::Node {
                 sport_origin_z_ = msg->position[2];
                 initial_sport_mode_ = false;
             }
+            // SportModeState does not provide a header; timestamp with node time.
             tfs_.header.stamp = this->now();
             tfs_.header.frame_id = frame_id;
             tfs_.child_frame_id = child_frame_id;

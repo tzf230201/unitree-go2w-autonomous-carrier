@@ -2,7 +2,7 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, TimerAction
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
@@ -29,6 +29,7 @@ def generate_launch_description():
 
     use_sim_time = LaunchConfiguration("use_sim_time")
 
+    # Bringup ordering: TF and /scan must exist before slam_toolbox starts.
     actions = [
         DeclareLaunchArgument(
             "rviz_config",
@@ -105,14 +106,14 @@ def generate_launch_description():
             default_value="false",
             description="Publish a static TF map->odom. Keep this false when using SLAM Toolbox.",
         ),
-        Node(
+        robot_description_pub := Node(
             package="go2w_description",
             executable="robot_description_publisher.py",
             name="robot_description_publisher",
             output="screen",
             parameters=[{"robot_description": robot_description}],
         ),
-        Node(
+        robot_state_pub := Node(
             package="robot_state_publisher",
             executable="robot_state_publisher",
             name="robot_state_publisher",
@@ -121,18 +122,18 @@ def generate_launch_description():
             condition=IfCondition(LaunchConfiguration("start_robot_state_publisher")),
             sigterm_timeout="15",
         ),
-        Node(
+        joints_state_pub := Node(
             package="go2w_joints_state_publisher",
             executable="go2w_joints_state_publisher_node",
             name="go2w_joints_state_publisher",
             output="screen",
             condition=IfCondition(LaunchConfiguration("start_joint_state_publisher")),
         ),
-        IncludeLaunchDescription(
+        hesai := IncludeLaunchDescription(
             PythonLaunchDescriptionSource(hesai_launch),
             condition=IfCondition(LaunchConfiguration("start_hesai")),
         ),
-        Node(
+        imu_pub := Node(
             package="go2w_imu_publisher",
             executable="go2w_imu_publisher_node",
             name="go2w_imu_publisher",
@@ -145,7 +146,7 @@ def generate_launch_description():
             ],
             condition=IfCondition(LaunchConfiguration("start_imu")),
         ),
-        Node(
+        map_to_odom_static := Node(
             package="tf2_ros",
             executable="static_transform_publisher",
             name="map_to_odom_static",
@@ -153,7 +154,7 @@ def generate_launch_description():
             output="screen",
             condition=IfCondition(LaunchConfiguration("publish_map_to_odom_static")),
         ),
-        Node(
+        odom_to_tf := Node(
             package="odom_to_tf_ros2",
             executable="odom_to_tf",
             name="odom_to_tf",
@@ -175,7 +176,7 @@ def generate_launch_description():
             condition=IfCondition(LaunchConfiguration("start_odom_to_tf")),
             sigterm_timeout="15",
         ),
-        Node(
+        pc_to_scan := Node(
             package="pointcloud_to_laserscan",
             executable="pointcloud_to_laserscan_node",
             name="pointcloud_to_laserscan_hesai",
@@ -187,29 +188,32 @@ def generate_launch_description():
                 {
                     "target_frame": "base_footprint",
                     "transform_tolerance": 0.01,
-                    "min_height": -0.3,
-                    "max_height": 3.0,
+                    # Filter ground / self returns. Tweak if your environment differs.
+                    "min_height": 0.05,
+                    "max_height": 2.0,
                     "angle_min": -3.142,
                     "angle_max": 3.142,
                     "angle_increment": 0.003141593,
                     "scan_time": 0.1,
                     "range_min": 0.1,
                     "range_max": 12.0,
-                    "use_inf": False,
+                    # If false, empty rays become range_max and can look like a fake wall/arc.
+                    "use_inf": True,
                     "inf_epsilon": 1.0,
+                    "use_sim_time": use_sim_time,
                 }
             ],
             output="screen",
             condition=IfCondition(LaunchConfiguration("start_pointcloud_to_laserscan")),
         ),
-        IncludeLaunchDescription(
+        lio_sam := IncludeLaunchDescription(
             PythonLaunchDescriptionSource(lio_sam_launch),
             launch_arguments={
                 "params_file": LaunchConfiguration("lio_sam_params_file"),
             }.items(),
             condition=IfCondition(LaunchConfiguration("start_lio_sam")),
         ),
-        Node(
+        slam_toolbox := Node(
             package="slam_toolbox",
             executable="async_slam_toolbox_node",
             name="slam_toolbox",
@@ -220,7 +224,7 @@ def generate_launch_description():
             ],
             condition=IfCondition(LaunchConfiguration("start_slam_toolbox")),
         ),
-        Node(
+        rviz := Node(
             package="rviz2",
             executable="rviz2",
             name="rviz2",
@@ -229,7 +233,12 @@ def generate_launch_description():
             parameters=[{"use_sim_time": use_sim_time}],
             condition=IfCondition(LaunchConfiguration("start_rviz")),
         ),
+        # Stagger compute-heavy components so TF exists before slam_toolbox begins filtering scans.
+        TimerAction(period=2.0, actions=[lio_sam]),
+        TimerAction(period=4.0, actions=[odom_to_tf]),
+        TimerAction(period=5.0, actions=[pc_to_scan]),
+        TimerAction(period=6.0, actions=[slam_toolbox]),
+        TimerAction(period=7.0, actions=[rviz]),
     ]
 
     return LaunchDescription(actions)
-

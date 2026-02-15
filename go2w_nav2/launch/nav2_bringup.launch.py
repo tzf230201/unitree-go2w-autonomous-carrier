@@ -124,17 +124,19 @@ def generate_launch_description():
         ],
         parameters=[
             {
-                "target_frame": "hesai_lidar",
+                "target_frame": "base_footprint",
                 "transform_tolerance": 0.01,
-                "min_height": -0.3,
-                "max_height": 3.0,
+                # Filter ground / self returns. Tweak if your environment differs.
+                "min_height": 0.05,
+                "max_height": 2.0,
                 "angle_min": -3.142,
                 "angle_max": 3.142,
                 "angle_increment": 0.003141593,
                 "scan_time": 0.1,
                 "range_min": 0.1,
                 "range_max": 12.0,
-                "use_inf": False,
+                # If false, empty rays become range_max and can look like a fake wall/arc.
+                "use_inf": True,
                 "inf_epsilon": 1.0,
             }
         ],

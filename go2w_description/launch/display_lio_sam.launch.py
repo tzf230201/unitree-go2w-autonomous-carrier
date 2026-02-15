@@ -182,8 +182,9 @@ def generate_launch_description():
                     "angle_increment": 0.003141593,
                     "scan_time": 0.1,
                     "range_min": 0.1,
-                    "range_max": 8.0,
-                    "use_inf": False,
+                    "range_max": 12.0,
+                    # If false, empty rays become range_max and can look like a fake wall/arc.
+                    "use_inf": True,
                     "inf_epsilon": 1.0,
                 }
             ],
