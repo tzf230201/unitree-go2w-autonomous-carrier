@@ -2,6 +2,10 @@
 
 slide: https://tzf230201.github.io/unitree-go2w-autonomous-carrier/
 
+
+![alt text](image.png)
+
+
 ## remote via NoMachine (recommended):
 
 NoMachine server is already installed on this robot (`nxserver`) and listens on port `4000`.

@@ -2,6 +2,8 @@
 
 This package provides a ready-to-use Nav2 bringup for Go2-W.
 
+![alt text](image.png)
+
 ### What it assumes
 
 - TF is available: `map -> odom -> base_link`
@@ -14,6 +16,7 @@ This package provides a ready-to-use Nav2 bringup for Go2-W.
 - Launch: `launch/nav2_bringup.launch.py`
 - Params: `config/nav2_params.yaml`
 - Default map: `maps/blank_map.yaml`
+- RViz (Nav2): `rviz/nav2.rviz`
 
 ### Build
 
@@ -45,6 +48,12 @@ If you do not have a map yet, run in SLAM mode:
 
 ```bash
 ros2 launch go2w_nav2 nav2_bringup.launch.py slam:=true
+```
+
+You can disable RViz (for headless runs):
+
+```bash
+ros2 launch go2w_nav2 nav2_bringup.launch.py start_rviz:=false
 ```
 
 ### Use your own map

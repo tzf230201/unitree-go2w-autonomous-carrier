@@ -22,6 +22,7 @@ def generate_launch_description():
     default_map = os.path.join(pkg_nav2, "maps", "blank_map.yaml")
     default_params = os.path.join(pkg_nav2, "config", "nav2_params.yaml")
     default_odom_to_tf_params = os.path.join(pkg_odom_to_tf, "config", "odom_to_tf.yaml")
+    default_rviz_config = os.path.join(pkg_nav2, "rviz", "nav2.rviz")
     urdf_path = os.path.join(pkg_description, "urdf", "go2w_description.urdf")
     cmd_vel_control_launch = os.path.join(pkg_cmd_vel, "launch", "go2w_cmd_vel_control.launch.py")
     lio_sam_launch = os.path.join(pkg_lio_sam, "launch", "run.launch.py")
@@ -34,6 +35,7 @@ def generate_launch_description():
     params_arg = LaunchConfiguration("params_file")
     slam_arg = LaunchConfiguration("slam")
     use_sim_time_arg = LaunchConfiguration("use_sim_time")
+    use_sim_time_param = ParameterValue(use_sim_time_arg, value_type=bool)
     autostart_arg = LaunchConfiguration("autostart")
     odom_to_tf_params_arg = LaunchConfiguration("odom_to_tf_params_file")
     odom_yaw_offset_arg = LaunchConfiguration("odom_yaw_offset")
@@ -42,6 +44,14 @@ def generate_launch_description():
     start_hesai_arg = LaunchConfiguration("start_hesai")
     start_imu_arg = LaunchConfiguration("start_imu")
     start_robot_state_publisher_arg = LaunchConfiguration("start_robot_state_publisher")
+    scan_target_frame_arg = LaunchConfiguration("scan_target_frame")
+    scan_min_height_arg = ParameterValue(LaunchConfiguration("scan_min_height"), value_type=float)
+    scan_max_height_arg = ParameterValue(LaunchConfiguration("scan_max_height"), value_type=float)
+    publish_tf_rate_hz_arg = ParameterValue(
+        LaunchConfiguration("publish_tf_rate_hz"), value_type=float
+    )
+    start_rviz_arg = LaunchConfiguration("start_rviz")
+    rviz_config_arg = LaunchConfiguration("rviz_config")
     slam_nav2_arg = PythonExpression(
         ["'True' if '", slam_arg, "'.lower() in ['1','true','yes','on'] else 'False'"]
     )
@@ -73,6 +83,7 @@ def generate_launch_description():
             {"input_lowstate_topic": "/lowstate"},
             {"output_imu_topic": "/dog_imu_raw"},
             {"frame_id": "imu_link"},
+            {"use_sim_time": use_sim_time_param},
         ],
         condition=IfCondition(start_imu_arg),
     )
@@ -89,7 +100,7 @@ def generate_launch_description():
         executable="robot_state_publisher",
         name="robot_state_publisher",
         output="screen",
-        parameters=[{"robot_description": robot_description}],
+        parameters=[{"robot_description": robot_description, "use_sim_time": use_sim_time_param}],
         condition=IfCondition(start_robot_state_publisher_arg),
         # robot_state_publisher can take a few seconds to teardown cleanly.
         sigterm_timeout="15",
@@ -106,6 +117,9 @@ def generate_launch_description():
             {
                 # LaunchConfiguration is a string; force float so rclcpp accepts it as double.
                 "odom_yaw_offset": ParameterValue(odom_yaw_offset_arg, value_type=float),
+                # Keep TF "fresh" even if /lio_sam/mapping/odometry is low-rate/irregular.
+                "publish_tf_rate_hz": publish_tf_rate_hz_arg,
+                "use_sim_time": use_sim_time_param,
             },
         ],
         # rclcpp teardown can take a few seconds (DDS discovery, etc).
@@ -124,11 +138,12 @@ def generate_launch_description():
         ],
         parameters=[
             {
-                "target_frame": "base_footprint",
+                # Publish /scan in a TF frame that exists in the URDF (default: hesai_lidar).
+                "target_frame": scan_target_frame_arg,
                 "transform_tolerance": 0.01,
                 # Filter ground / self returns. Tweak if your environment differs.
-                "min_height": 0.05,
-                "max_height": 2.0,
+                "min_height": scan_min_height_arg,
+                "max_height": scan_max_height_arg,
                 "angle_min": -3.142,
                 "angle_max": 3.142,
                 "angle_increment": 0.003141593,
@@ -138,6 +153,7 @@ def generate_launch_description():
                 # If false, empty rays become range_max and can look like a fake wall/arc.
                 "use_inf": True,
                 "inf_epsilon": 1.0,
+                "use_sim_time": use_sim_time_param,
             }
         ],
     )
@@ -153,6 +169,16 @@ def generate_launch_description():
             "params_file": params_arg,
             "autostart": autostart_arg,
         }.items(),
+    )
+
+    rviz = Node(
+        package="rviz2",
+        executable="rviz2",
+        name="rviz2",
+        output="screen",
+        arguments=["-d", rviz_config_arg],
+        parameters=[{"use_sim_time": use_sim_time_param}],
+        condition=IfCondition(start_rviz_arg),
     )
 
     return LaunchDescription(
@@ -196,6 +222,11 @@ def generate_launch_description():
                 ),
             ),
             DeclareLaunchArgument(
+                "publish_tf_rate_hz",
+                default_value="50.0",
+                description="Republish latest odom->base_footprint TF at this rate (Hz).",
+            ),
+            DeclareLaunchArgument(
                 "cmd_vel_topic",
                 default_value="/cmd_vel",
                 description="cmd_vel topic for go2w_cmd_vel_control",
@@ -220,6 +251,31 @@ def generate_launch_description():
                 default_value="true",
                 description="Start robot_state_publisher for TF chain (including hesai_lidar frame)",
             ),
+            DeclareLaunchArgument(
+                "start_rviz",
+                default_value="true",
+                description="Start RViz for Nav2.",
+            ),
+            DeclareLaunchArgument(
+                "rviz_config",
+                default_value=default_rviz_config,
+                description="RViz config file for Nav2.",
+            ),
+            DeclareLaunchArgument(
+                "scan_target_frame",
+                default_value="hesai_lidar",
+                description="pointcloud_to_laserscan target_frame (sets /scan frame_id).",
+            ),
+            DeclareLaunchArgument(
+                "scan_min_height",
+                default_value="-0.15",
+                description="pointcloud_to_laserscan min_height in target_frame (meters).",
+            ),
+            DeclareLaunchArgument(
+                "scan_max_height",
+                default_value="1.5",
+                description="pointcloud_to_laserscan max_height in target_frame (meters).",
+            ),
             cmd_vel_control,
             hesai_lidar,
             imu_publisher,
@@ -229,5 +285,6 @@ def generate_launch_description():
             TimerAction(period=4.0, actions=[odom_to_tf]),
             TimerAction(period=5.0, actions=[pointcloud_to_scan]),
             TimerAction(period=6.0, actions=[bringup]),
+            TimerAction(period=7.0, actions=[rviz]),
         ]
     )
