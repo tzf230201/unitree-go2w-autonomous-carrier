@@ -63,7 +63,7 @@ If you see `No executable found` for `cmd_vel_control`, your ROS 2 environment i
 Use this safe sourcing order (dependencies first, then this workspace) and prefer `local_setup.bash` (not `setup.bash`) to avoid the generated prefix-chain ordering:
 
 ```bash
-unset AMENT_PREFIX_PATH CMAKE_PREFIX_PATH COLCON_PREFIX_PATH
+unset AMENT_PREFIX_PATH CMAKE_PREFIX_PATH COLCON_PREFIX_PATH PYTHONPATH
 source /opt/ros/foxy/setup.bash
 source ~/go2w_ws/unitree_ros2/install/local_setup.bash
 source ~/go2w_ws/install/local_setup.bash
@@ -87,6 +87,122 @@ source install/setup.bash
 ros2 run hesai_ros_driver hesai_ros_driver_node
 ```
 
+### troubleshooting: `LidarState` message missing
+
+Most important symptom:
+
+```
+AttributeError: module 'unitree_go.msg' has no attribute 'LidarState'
+```
+
+Artinya: saat `ros2 topic echo /utlidar/lidar_state` jalan, ROS2 mencoba import tipe pesan bernama `unitree_go/msg/LidarState`, tapi di instalasi kamu message itu tidak ada / tidak ter-generate / tidak tersource.
+
+In this repo, the most common root cause is a broken/older overlay (commonly `~/go2w_ws/unitree_ros2/install`) shadowing the correct `unitree_go` Python message package. You can confirm which one is being imported:
+
+```bash
+python3 -c "import unitree_go,unitree_go.msg; print(unitree_go.__file__); print('has LidarState:', hasattr(unitree_go.msg,'LidarState'))"
+```
+
+Safe fix for this workspace (clean + source only what you need):
+
+```bash
+unset AMENT_PREFIX_PATH CMAKE_PREFIX_PATH COLCON_PREFIX_PATH PYTHONPATH
+source /opt/ros/foxy/setup.bash
+source ~/go2w_ws/install/local_setup.bash
+
+# Foxy doesn't have --once; use timeout if you only want 1-2 seconds of output
+timeout 2 ros2 topic echo /utlidar/lidar_state
+```
+
+### built-in Unitree SLAM (without building your own stack)
+
+Unitree docs state that `unitree_slam` and test routines can conflict with ROS/ROS2 initialized shells. Use separate terminals:
+
+#### Terminal A: run Unitree built-in SLAM only (no ROS sourcing)
+
+```bash
+env -i HOME=$HOME USER=$USER SHELL=/bin/bash TERM=$TERM PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin bash --noprofile --norc
+
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export CYCLONEDDS_URI=~/go2w_ws/cyclonedds_ws/cyclonedds.xml
+
+cd /unitree/module/unitree_slam/bin
+./unitree_slam
+```
+
+Open another non-ROS terminal for lidar driver (pick one):
+
+```bash
+env -i HOME=$HOME USER=$USER SHELL=/bin/bash TERM=$TERM PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin bash --noprofile --norc
+cd /unitree/module/unitree_slam/bin
+./mid360_driver
+# or
+./xt16_driver
+```
+
+Optional test client (also non-ROS shell):
+
+```bash
+cd /unitree/module/unitree_slam/bin
+./keyDemo eth0
+```
+
+#### Terminal B: ROS2 workspace (monitoring/tools only)
+
+```bash
+unset AMENT_PREFIX_PATH CMAKE_PREFIX_PATH COLCON_PREFIX_PATH PYTHONPATH LD_LIBRARY_PATH
+source /opt/ros/foxy/setup.bash
+source ~/go2w_ws/install/local_setup.bash
+```
+
+Recommended: do not start heavy ROS2 nodes while built-in SLAM is running on dock PC.
+
+#### quick rule
+
+- Built-in SLAM binaries (`unitree_slam`, `mid360_driver`/`xt16_driver`, `keyDemo`): run in clean non-ROS shell.
+- ROS2 tools/nodes: run in separate ROS2 shell.
+- Do not source ROS and run built-in SLAM binaries in the same terminal session.
+
+#### helper scripts (recommended)
+
+From `~/go2w_ws/src/unitree-go2w-autonomous-carrier`:
+
+```bash
+chmod +x scripts/*.sh
+```
+
+Terminal A:
+
+```bash
+./scripts/run_unitree_slam.sh
+```
+
+Terminal B:
+
+```bash
+./scripts/run_xt16_driver.sh
+```
+
+Optional command terminal:
+
+```bash
+./scripts/run_keydemo.sh eth0
+```
+
+Optional ROS2 monitor shell:
+
+```bash
+./scripts/run_ros2_monitor_shell.sh
+```
+
+One command to run built-in SLAM stack (tmux):
+
+```bash
+./scripts/run_builtin_slam_stack.sh
+# then:
+tmux attach -t go2w_slam
+```
+
 # d-lio
 https://techshare.co.jp/faq/unitree/xt16-on-go2_d-lio.html
 
@@ -103,5 +219,3 @@ https://github.com/TechShare-inc/go2_unitree_ros2.git
 
 the pointcloud_to_laserscan from : 
 https://github.com/felixokolo/pointcloud_to_laserscan/tree/97c195bbc84f410263178a02ee1117b661a45015
-
-
