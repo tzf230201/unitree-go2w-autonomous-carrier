@@ -20,7 +20,8 @@ def generate_launch_description():
     pkg_description = get_package_share_directory("go2w_description")
 
     default_map = os.path.join(pkg_nav2, "maps", "blank_map.yaml")
-    default_params = os.path.join(pkg_nav2, "config", "nav2_params.yaml")
+    default_nav2_params = os.path.join(pkg_nav2, "config", "nav2_params.yaml")
+    default_lio_sam_params = os.path.join(pkg_lio_sam, "config", "params_xt16.yaml")
     default_odom_to_tf_params = os.path.join(pkg_odom_to_tf, "config", "odom_to_tf.yaml")
     default_rviz_config = os.path.join(pkg_nav2, "rviz", "nav2.rviz")
     urdf_path = os.path.join(pkg_description, "urdf", "go2w_description.urdf")
@@ -32,13 +33,15 @@ def generate_launch_description():
         robot_description = f.read()
 
     map_arg = LaunchConfiguration("map")
-    params_arg = LaunchConfiguration("params_file")
+    nav2_params_arg = LaunchConfiguration("nav2_params_file")
+    lio_sam_params_arg = LaunchConfiguration("lio_sam_params_file")
     slam_arg = LaunchConfiguration("slam")
     use_sim_time_arg = LaunchConfiguration("use_sim_time")
     use_sim_time_param = ParameterValue(use_sim_time_arg, value_type=bool)
     autostart_arg = LaunchConfiguration("autostart")
     odom_to_tf_params_arg = LaunchConfiguration("odom_to_tf_params_file")
     odom_yaw_offset_arg = LaunchConfiguration("odom_yaw_offset")
+    lio_sam_odom_topic_arg = LaunchConfiguration("lio_sam_odom_topic")
     cmd_vel_topic_arg = LaunchConfiguration("cmd_vel_topic")
     request_topic_arg = LaunchConfiguration("request_topic")
     start_hesai_arg = LaunchConfiguration("start_hesai")
@@ -67,6 +70,12 @@ def generate_launch_description():
 
     lio_sam = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(lio_sam_launch),
+        # IMPORTANT: lio_sam's run.launch.py also uses a launch arg named "params_file".
+        # If we have a top-level "params_file" for Nav2, LIO-SAM will accidentally read Nav2 params
+        # and then it won't subscribe/publish the expected topics.
+        launch_arguments={
+            "params_file": lio_sam_params_arg,
+        }.items(),
     )
 
     hesai_lidar = IncludeLaunchDescription(
@@ -115,6 +124,9 @@ def generate_launch_description():
         parameters=[
             odom_to_tf_params_arg,
             {
+                # Some setups publish odometry under /lio_sam/mapping/odometry (not /lio_sam_ros2/...).
+                # Override here so we don't have to modify the odom_to_tf package/config.
+                "odom_topic": lio_sam_odom_topic_arg,
                 # LaunchConfiguration is a string; force float so rclcpp accepts it as double.
                 "odom_yaw_offset": ParameterValue(odom_yaw_offset_arg, value_type=float),
                 # Keep TF "fresh" even if /lio_sam/mapping/odometry is low-rate/irregular.
@@ -166,7 +178,7 @@ def generate_launch_description():
             "slam": slam_nav2_arg,
             "map": map_arg,
             "use_sim_time": use_sim_time_arg,
-            "params_file": params_arg,
+            "params_file": nav2_params_arg,
             "autostart": autostart_arg,
         }.items(),
     )
@@ -189,9 +201,14 @@ def generate_launch_description():
                 description="Path to map yaml file",
             ),
             DeclareLaunchArgument(
-                "params_file",
-                default_value=default_params,
-                description="Path to Nav2 parameter file",
+                "nav2_params_file",
+                default_value=default_nav2_params,
+                description="Path to Nav2 parameter file (passed to nav2_bringup).",
+            ),
+            DeclareLaunchArgument(
+                "lio_sam_params_file",
+                default_value=default_lio_sam_params,
+                description="Path to LIO-SAM parameter file (passed to lio_sam/run.launch.py).",
             ),
             DeclareLaunchArgument(
                 "slam",
@@ -220,6 +237,11 @@ def generate_launch_description():
                     "Yaw rotation (rad) applied to incoming odometry before publishing TF. "
                     "If moving forward looks like moving sideways in RViz, try -1.5708 or +1.5708."
                 ),
+            ),
+            DeclareLaunchArgument(
+                "lio_sam_odom_topic",
+                default_value="/lio_sam/mapping/odometry",
+                description="Input odometry topic for odom_to_tf (from LIO-SAM).",
             ),
             DeclareLaunchArgument(
                 "publish_tf_rate_hz",
