@@ -18,6 +18,7 @@ find_package(rclcpp_action REQUIRED)
 find_package(rosidl_typesupport_c REQUIRED) 
 find_package(pcl_conversions REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
+find_package(tf2_ros REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 find_package(builtin_interfaces REQUIRED)
 find_package(std_msgs REQUIRED)
@@ -37,6 +38,17 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 )
 find_package(PCL REQUIRED COMPONENTS io)
 ament_export_dependencies(rosidl_default_runtime)
+
+find_path(PCAP_INCLUDE_DIR pcap.h)
+find_library(PCAP_LIBRARY pcap)
+if(PCAP_INCLUDE_DIR AND PCAP_LIBRARY)
+  message(STATUS "PCAP support enabled: ${PCAP_LIBRARY}")
+  set(HESAI_HAS_PCAP 1)
+else()
+  message(WARNING "PCAP headers/library not found. Building hesai_lidar without PCAP file playback support.")
+  set(HESAI_HAS_PCAP 0)
+endif()
+
 ##PandarGeneralRaw
 add_library(PandarGeneral
     src/HesaiLidar_General_SDK/src/PandarGeneralRaw/src/input.cc
@@ -51,15 +63,25 @@ target_include_directories(PandarGeneral PRIVATE
     ${PCL_INCLUDE_DIRS}
     # ${ament_INCLUDE_DIRS}
 )
+if(PCAP_INCLUDE_DIR)
+  target_include_directories(PandarGeneral PRIVATE ${PCAP_INCLUDE_DIR})
+endif()
+target_compile_definitions(PandarGeneral PRIVATE HESAI_HAS_PCAP=${HESAI_HAS_PCAP})
 target_link_libraries(PandarGeneral
     ${Boost_LIBRARIES}
     ${PCL_IO_LIBRARIES}
     Boost::thread
-    pcap
     # ${ament_LIBRARIES}
 )
+if(PCAP_LIBRARY)
+  target_link_libraries(PandarGeneral ${PCAP_LIBRARY})
+endif()
 
 rosidl_target_interfaces(PandarGeneral  ${PROJECT_NAME} "rosidl_typesupport_cpp")
+ament_target_dependencies(PandarGeneral
+  tf2_ros
+  tf2_geometry_msgs
+)
 
 ###PandarGeneralSDK
 add_library(PandarGeneralSDK SHARED
@@ -82,9 +104,15 @@ target_link_libraries(PandarGeneralSDK
     ${PCL_IO_LIBRARIES}
     # ${YAML_CPP_LIBRARIES}
     Boost::thread
-    pcap
 )
+if(PCAP_LIBRARY)
+  target_link_libraries(PandarGeneralSDK ${PCAP_LIBRARY})
+endif()
 rosidl_target_interfaces(PandarGeneralSDK   ${PROJECT_NAME} "rosidl_typesupport_cpp")
+ament_target_dependencies(PandarGeneralSDK
+  tf2_ros
+  tf2_geometry_msgs
+)
 
 
 ##hesai node

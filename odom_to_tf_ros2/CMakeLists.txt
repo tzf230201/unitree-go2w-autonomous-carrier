@@ -13,6 +13,13 @@ find_package(rclcpp REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+
+# Allow building even when the Unitree overlay is not sourced in the shell.
+set(_unitree_overlay_prefix "$ENV{HOME}/unitree_ros2/cyclonedds_ws/install")
+if (EXISTS "${_unitree_overlay_prefix}/unitree_go/share/unitree_go/cmake/unitree_goConfig.cmake")
+  list(PREPEND CMAKE_PREFIX_PATH "${_unitree_overlay_prefix}")
+endif()
+
 find_package(unitree_go REQUIRED)
 
 if(BUILD_TESTING)

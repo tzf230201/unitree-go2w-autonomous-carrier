@@ -16,8 +16,30 @@
 
 #include <boost/function.hpp>
 #include <boost/thread.hpp>
-#include "pcap.h"
+#include <map>
 #include <string>
+
+#if !defined(HESAI_HAS_PCAP)
+#if defined(__has_include)
+#if __has_include(<pcap.h>)
+#define HESAI_HAS_PCAP 1
+#elif __has_include(<pcap/pcap.h>)
+#define HESAI_HAS_PCAP 1
+#else
+#define HESAI_HAS_PCAP 0
+#endif
+#else
+#define HESAI_HAS_PCAP 0
+#endif
+#endif
+
+#if HESAI_HAS_PCAP
+#if defined(__has_include) && __has_include(<pcap.h>)
+#include <pcap.h>
+#else
+#include <pcap/pcap.h>
+#endif
+#endif
 
 using namespace std;
 

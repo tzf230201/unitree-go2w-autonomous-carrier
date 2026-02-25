@@ -12,6 +12,13 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(geometry_msgs REQUIRED)
+
+# Allow building even when the Unitree overlay is not sourced in the shell.
+set(_unitree_overlay_prefix "$ENV{HOME}/unitree_ros2/cyclonedds_ws/install")
+if (EXISTS "${_unitree_overlay_prefix}/unitree_api/share/unitree_api/cmake/unitree_apiConfig.cmake")
+  list(PREPEND CMAKE_PREFIX_PATH "${_unitree_overlay_prefix}")
+endif()
+
 find_package(unitree_api REQUIRED)
 
 add_executable(go2w_cmd_vel_control_node src/go2w_cmd_vel_control_node.cpp)

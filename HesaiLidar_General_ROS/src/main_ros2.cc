@@ -2,10 +2,10 @@
 #include <rclcpp/rclcpp.hpp>
 #include <hesai_lidar/msg/pandar_scan.hpp>
 #include <hesai_lidar/msg/pandar_packet.hpp>
-#include <image_transport/image_transport.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#include <boost/bind/bind.hpp>
 #include "pandarGeneral_sdk/pandarGeneral_sdk.h"
 #include <fstream>
 #include <memory>
@@ -127,7 +127,8 @@ private:
     this->get_parameter("background_b", targetFrame);
   
     if(!pcapFile.empty()){
-      hsdk = new PandarGeneralSDK(pcapFile, boost::bind(&HesaiLidarClient::lidarCallback, this, _1, _2, _3), \
+      hsdk = new PandarGeneralSDK(pcapFile, boost::bind(&HesaiLidarClient::lidarCallback, this,
+      boost::placeholders::_1, boost::placeholders::_2, boost::placeholders::_3), \
       static_cast<int>(startAngle * 100 + 0.5), 0, pclDataType, lidarType, frameId, m_sTimestampType, lidarCorrectionFile, \
       coordinateCorrectionFlag, targetFrame, fixedFrame);
       if (hsdk != NULL) {
@@ -156,7 +157,8 @@ private:
       }
     }
     else if ("rosbag" == dataType){
-      hsdk = new PandarGeneralSDK("", boost::bind(&HesaiLidarClient::lidarCallback, this, _1, _2, _3), \
+      hsdk = new PandarGeneralSDK("", boost::bind(&HesaiLidarClient::lidarCallback, this,
+      boost::placeholders::_1, boost::placeholders::_2, boost::placeholders::_3), \
       static_cast<int>(startAngle * 100 + 0.5), 0, pclDataType, lidarType, frameId, m_sTimestampType, \
       lidarCorrectionFile, coordinateCorrectionFlag, targetFrame, fixedFrame);
       if (hsdk != NULL) {
@@ -165,8 +167,9 @@ private:
     }
     else {
       hsdk = new PandarGeneralSDK(serverIp, lidarRecvPort, gpsPort, \
-        boost::bind(&HesaiLidarClient::lidarCallback, this, _1, _2, _3), \
-        boost::bind(&HesaiLidarClient::gpsCallback, this, _1), static_cast<int>(startAngle * 100 + 0.5), 0, pclDataType, lidarType, frameId,\
+        boost::bind(&HesaiLidarClient::lidarCallback, this,
+        boost::placeholders::_1, boost::placeholders::_2, boost::placeholders::_3), \
+        boost::bind(&HesaiLidarClient::gpsCallback, this, boost::placeholders::_1), static_cast<int>(startAngle * 100 + 0.5), 0, pclDataType, lidarType, frameId,\
          m_sTimestampType, lidarCorrectionFile, multicastIp, coordinateCorrectionFlag, targetFrame, fixedFrame);
     }
     
@@ -193,6 +196,3 @@ int main(int argc, char **argv)
   rclcpp::shutdown();
   return 0;
 }
-#include "rclcpp_components/register_node_macro.hpp"
-
-// RCLCPP_COMPONENTS_REGISTER_NODE(HesaiLidarClient)

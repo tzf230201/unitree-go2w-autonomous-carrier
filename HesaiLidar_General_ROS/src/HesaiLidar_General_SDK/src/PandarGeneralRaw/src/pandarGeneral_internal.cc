@@ -15,6 +15,7 @@
  *****************************************************************************/
 
 #include <sstream>
+#include <boost/bind/bind.hpp>
 
 #include "src/input.h"
 #include "src/pandarGeneral_internal.h"
@@ -686,7 +687,10 @@ int PandarGeneral_Internal::Start() {
     lidar_recv_thr_ =
         new boost::thread(boost::bind(&PandarGeneral_Internal::RecvTask, this));
   } else {
-    pcap_reader_->start(boost::bind(&PandarGeneral_Internal::FillPacket, this, _1, _2, _3));
+    pcap_reader_->start(boost::bind(&PandarGeneral_Internal::FillPacket, this,
+                                    boost::placeholders::_1,
+                                    boost::placeholders::_2,
+                                    boost::placeholders::_3));
   }
 }
 
@@ -2125,4 +2129,3 @@ void PandarGeneral_Internal::SetCorrectionFileFlag(bool flag ){
 //     y = p.y();
 //     z = p.z();
 //   }
-

@@ -2,12 +2,15 @@
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
+#include <cstdio>
 #include "pcap_reader.h"
 #include "log.h"
 #include <map>
 #include "../util.h"
 
 #define PKT_HEADER_SIZE (42)
+
+#if HESAI_HAS_PCAP
 
 PcapReader::PcapReader(std::string path, std::string frame_id) {
   initTimeIndexMap();
@@ -164,3 +167,32 @@ void PcapReader::parsePcap() {
     pcapFile = NULL;
   }
 }
+
+#else
+
+PcapReader::PcapReader(std::string path, std::string frame_id) {
+  pcapPath = path;
+  m_sFrameId = frame_id;
+  loop = false;
+  parse_thr_ = NULL;
+  m_iTsIndex = 0;
+  m_iUTCIndex = 0;
+}
+
+PcapReader::~PcapReader() {
+  stop();
+}
+
+void PcapReader::initTimeIndexMap() {}
+
+void PcapReader::start(boost::function<void(const uint8_t*, const int, double timestamp)> /*callback*/) {
+  if (!pcapPath.empty()) {
+    std::fprintf(stderr, "PCAP support is disabled (missing libpcap-dev). Ignoring pcap file: %s\n", pcapPath.c_str());
+  }
+}
+
+void PcapReader::stop() {}
+
+void PcapReader::parsePcap() {}
+
+#endif

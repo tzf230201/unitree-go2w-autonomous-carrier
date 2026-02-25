@@ -18,8 +18,8 @@ set(_unitree_go_include_dir "")
 # Prefer build-generated headers (non-empty).
 if (EXISTS "$ENV{HOME}/go2w_ws/build/unitree_go/rosidl_generator_cpp/unitree_go/msg/low_cmd.hpp")
   set(_unitree_go_include_dir "$ENV{HOME}/go2w_ws/build/unitree_go/rosidl_generator_cpp")
-elseif (EXISTS "$ENV{HOME}/go2w_ws/unitree_ros2/build/unitree_go/rosidl_generator_cpp/unitree_go/msg/low_cmd.hpp")
-  set(_unitree_go_include_dir "$ENV{HOME}/go2w_ws/unitree_ros2/build/unitree_go/rosidl_generator_cpp")
+elseif (EXISTS "$ENV{HOME}/unitree_ros2/cyclonedds_ws/build/unitree_go/rosidl_generator_cpp/unitree_go/msg/low_cmd.hpp")
+  set(_unitree_go_include_dir "$ENV{HOME}/unitree_ros2/cyclonedds_ws/build/unitree_go/rosidl_generator_cpp")
 endif()
 
 # Fall back to CMAKE_PREFIX_PATH.
@@ -32,14 +32,18 @@ if (NOT _unitree_go_include_dir)
     if (EXISTS "${_prefix}/include/unitree_go/msg/low_cmd.hpp")
       set(_unitree_go_include_dir "${_prefix}/include")
       break()
+    elseif (EXISTS "${_prefix}/include/unitree_go/unitree_go/msg/low_cmd.hpp")
+      # Some SDK installs place generated headers under include/unitree_go/unitree_go/msg.
+      set(_unitree_go_include_dir "${_prefix}/include/unitree_go")
+      break()
     endif()
   endforeach()
 endif()
 
 # Final fallback to installed path.
 if (NOT _unitree_go_include_dir)
-  if (EXISTS "$ENV{HOME}/go2w_ws/unitree_ros2/install/unitree_go/include/unitree_go/msg/low_cmd.hpp")
-    set(_unitree_go_include_dir "$ENV{HOME}/go2w_ws/unitree_ros2/install/unitree_go/include")
+  if (EXISTS "$ENV{HOME}/unitree_ros2/cyclonedds_ws/install/unitree_go/include/unitree_go/unitree_go/msg/low_cmd.hpp")
+    set(_unitree_go_include_dir "$ENV{HOME}/unitree_ros2/cyclonedds_ws/install/unitree_go/include/unitree_go")
   endif()
 endif()
 
@@ -51,8 +55,8 @@ endif()
 set(_unitree_go_typesupport_lib "")
 if (EXISTS "$ENV{HOME}/go2w_ws/build/unitree_go/libunitree_go__rosidl_typesupport_cpp.so")
   set(_unitree_go_typesupport_lib "$ENV{HOME}/go2w_ws/build/unitree_go/libunitree_go__rosidl_typesupport_cpp.so")
-elseif (EXISTS "$ENV{HOME}/go2w_ws/unitree_ros2/build/unitree_go/libunitree_go__rosidl_typesupport_cpp.so")
-  set(_unitree_go_typesupport_lib "$ENV{HOME}/go2w_ws/unitree_ros2/build/unitree_go/libunitree_go__rosidl_typesupport_cpp.so")
+elseif (EXISTS "$ENV{HOME}/unitree_ros2/cyclonedds_ws/build/unitree_go/libunitree_go__rosidl_typesupport_cpp.so")
+  set(_unitree_go_typesupport_lib "$ENV{HOME}/unitree_ros2/cyclonedds_ws/build/unitree_go/libunitree_go__rosidl_typesupport_cpp.so")
 else()
   # Fall back to CMAKE_PREFIX_PATH for installed library.
   set(_prefix_list "${CMAKE_PREFIX_PATH}")
