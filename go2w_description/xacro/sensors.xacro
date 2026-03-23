@@ -58,15 +58,18 @@
                 <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" />
             </inertial>
             <visual>
-                <origin xyz="0 0 0" rpy="0 0 0" />
+                <origin xyz="-0.00286 0 -0.025" rpy="1.5707963267948966 0 0" />
                 <geometry>
-                    <cylinder radius="0.05" length="0.08" />
+                    <mesh filename="package://go2w_description/dae/XT32XT16.stl" scale="0.001 0.001 0.001" />
                 </geometry>
+                <material name="hesai_lidar_material">
+                    <color rgba="0.20 0.22 0.24 1.0" />
+                </material>
             </visual>
             <collision>
-                <origin xyz="0 0 0" rpy="0 0 0" />
+                <origin xyz="-0.00286 0 -0.025" rpy="1.5707963267948966 0 0" />
                 <geometry>
-                    <cylinder radius="0.05" length="0.08" />
+                    <mesh filename="package://go2w_description/dae/XT32XT16.stl" scale="0.001 0.001 0.001" />
                 </geometry>
             </collision>
         </link>
