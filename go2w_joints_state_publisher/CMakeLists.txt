@@ -14,36 +14,38 @@ find_package(sensor_msgs REQUIRED)
 
 # unitree_goConfig.cmake in this SDK is empty, so resolve headers manually.
 set(_unitree_go_include_dir "")
-
-# Prefer build-generated headers (non-empty).
-if (EXISTS "$ENV{HOME}/go2w_ws/build/unitree_go/rosidl_generator_cpp/unitree_go/msg/low_cmd.hpp")
-  set(_unitree_go_include_dir "$ENV{HOME}/go2w_ws/build/unitree_go/rosidl_generator_cpp")
-elseif (EXISTS "$ENV{HOME}/unitree_ros2/cyclonedds_ws/build/unitree_go/rosidl_generator_cpp/unitree_go/msg/low_cmd.hpp")
-  set(_unitree_go_include_dir "$ENV{HOME}/unitree_ros2/cyclonedds_ws/build/unitree_go/rosidl_generator_cpp")
+set(_prefix_list "${CMAKE_PREFIX_PATH}")
+if (NOT _prefix_list AND DEFINED ENV{CMAKE_PREFIX_PATH})
+  string(REPLACE ":" ";" _prefix_list "$ENV{CMAKE_PREFIX_PATH}")
 endif()
 
-# Fall back to CMAKE_PREFIX_PATH.
-if (NOT _unitree_go_include_dir)
-  set(_prefix_list "${CMAKE_PREFIX_PATH}")
-  if (NOT _prefix_list AND DEFINED ENV{CMAKE_PREFIX_PATH})
-    string(REPLACE ":" ";" _prefix_list "$ENV{CMAKE_PREFIX_PATH}")
+# Prefer install/prefix headers first to avoid build-vs-install mixing.
+foreach(_prefix ${_prefix_list})
+  if (EXISTS "${_prefix}/include/unitree_go/msg/low_cmd.hpp")
+    set(_unitree_go_include_dir "${_prefix}/include")
+    break()
+  elseif (EXISTS "${_prefix}/include/unitree_go/unitree_go/msg/low_cmd.hpp")
+    # Some SDK installs place generated headers under include/unitree_go/unitree_go/msg.
+    set(_unitree_go_include_dir "${_prefix}/include/unitree_go")
+    break()
   endif()
-  foreach(_prefix ${_prefix_list})
-    if (EXISTS "${_prefix}/include/unitree_go/msg/low_cmd.hpp")
-      set(_unitree_go_include_dir "${_prefix}/include")
-      break()
-    elseif (EXISTS "${_prefix}/include/unitree_go/unitree_go/msg/low_cmd.hpp")
-      # Some SDK installs place generated headers under include/unitree_go/unitree_go/msg.
-      set(_unitree_go_include_dir "${_prefix}/include/unitree_go")
-      break()
-    endif()
-  endforeach()
+endforeach()
+
+# Explicit install-prefix fallback for common local layouts.
+if (NOT _unitree_go_include_dir)
+  if (EXISTS "$ENV{HOME}/go2w_ws/install/unitree_go/include/unitree_go/unitree_go/msg/low_cmd.hpp")
+    set(_unitree_go_include_dir "$ENV{HOME}/go2w_ws/install/unitree_go/include/unitree_go")
+  elseif (EXISTS "$ENV{HOME}/unitree_ros2/cyclonedds_ws/install/unitree_go/include/unitree_go/unitree_go/msg/low_cmd.hpp")
+    set(_unitree_go_include_dir "$ENV{HOME}/unitree_ros2/cyclonedds_ws/install/unitree_go/include/unitree_go")
+  endif()
 endif()
 
-# Final fallback to installed path.
+# Last fallback: build-generated headers.
 if (NOT _unitree_go_include_dir)
-  if (EXISTS "$ENV{HOME}/unitree_ros2/cyclonedds_ws/install/unitree_go/include/unitree_go/unitree_go/msg/low_cmd.hpp")
-    set(_unitree_go_include_dir "$ENV{HOME}/unitree_ros2/cyclonedds_ws/install/unitree_go/include/unitree_go")
+  if (EXISTS "$ENV{HOME}/go2w_ws/build/unitree_go/rosidl_generator_cpp/unitree_go/msg/low_cmd.hpp")
+    set(_unitree_go_include_dir "$ENV{HOME}/go2w_ws/build/unitree_go/rosidl_generator_cpp")
+  elseif (EXISTS "$ENV{HOME}/unitree_ros2/cyclonedds_ws/build/unitree_go/rosidl_generator_cpp/unitree_go/msg/low_cmd.hpp")
+    set(_unitree_go_include_dir "$ENV{HOME}/unitree_ros2/cyclonedds_ws/build/unitree_go/rosidl_generator_cpp")
   endif()
 endif()
 
@@ -53,22 +55,29 @@ endif()
 
 # Resolve unitree_go C++ typesupport library for linking.
 set(_unitree_go_typesupport_lib "")
-if (EXISTS "$ENV{HOME}/go2w_ws/build/unitree_go/libunitree_go__rosidl_typesupport_cpp.so")
-  set(_unitree_go_typesupport_lib "$ENV{HOME}/go2w_ws/build/unitree_go/libunitree_go__rosidl_typesupport_cpp.so")
-elseif (EXISTS "$ENV{HOME}/unitree_ros2/cyclonedds_ws/build/unitree_go/libunitree_go__rosidl_typesupport_cpp.so")
-  set(_unitree_go_typesupport_lib "$ENV{HOME}/unitree_ros2/cyclonedds_ws/build/unitree_go/libunitree_go__rosidl_typesupport_cpp.so")
-else()
-  # Fall back to CMAKE_PREFIX_PATH for installed library.
-  set(_prefix_list "${CMAKE_PREFIX_PATH}")
-  if (NOT _prefix_list AND DEFINED ENV{CMAKE_PREFIX_PATH})
-    string(REPLACE ":" ";" _prefix_list "$ENV{CMAKE_PREFIX_PATH}")
+foreach(_prefix ${_prefix_list})
+  if (EXISTS "${_prefix}/lib/libunitree_go__rosidl_typesupport_cpp.so")
+    set(_unitree_go_typesupport_lib "${_prefix}/lib/libunitree_go__rosidl_typesupport_cpp.so")
+    break()
   endif()
-  foreach(_prefix ${_prefix_list})
-    if (EXISTS "${_prefix}/lib/libunitree_go__rosidl_typesupport_cpp.so")
-      set(_unitree_go_typesupport_lib "${_prefix}/lib/libunitree_go__rosidl_typesupport_cpp.so")
-      break()
-    endif()
-  endforeach()
+endforeach()
+
+# Explicit install-prefix fallback for common local layouts.
+if (NOT _unitree_go_typesupport_lib)
+  if (EXISTS "$ENV{HOME}/go2w_ws/install/unitree_go/lib/libunitree_go__rosidl_typesupport_cpp.so")
+    set(_unitree_go_typesupport_lib "$ENV{HOME}/go2w_ws/install/unitree_go/lib/libunitree_go__rosidl_typesupport_cpp.so")
+  elseif (EXISTS "$ENV{HOME}/unitree_ros2/cyclonedds_ws/install/unitree_go/lib/libunitree_go__rosidl_typesupport_cpp.so")
+    set(_unitree_go_typesupport_lib "$ENV{HOME}/unitree_ros2/cyclonedds_ws/install/unitree_go/lib/libunitree_go__rosidl_typesupport_cpp.so")
+  endif()
+endif()
+
+# Last fallback: build-generated library.
+if (NOT _unitree_go_typesupport_lib)
+  if (EXISTS "$ENV{HOME}/go2w_ws/build/unitree_go/libunitree_go__rosidl_typesupport_cpp.so")
+    set(_unitree_go_typesupport_lib "$ENV{HOME}/go2w_ws/build/unitree_go/libunitree_go__rosidl_typesupport_cpp.so")
+  elseif (EXISTS "$ENV{HOME}/unitree_ros2/cyclonedds_ws/build/unitree_go/libunitree_go__rosidl_typesupport_cpp.so")
+    set(_unitree_go_typesupport_lib "$ENV{HOME}/unitree_ros2/cyclonedds_ws/build/unitree_go/libunitree_go__rosidl_typesupport_cpp.so")
+  endif()
 endif()
 
 if (NOT _unitree_go_typesupport_lib)
@@ -87,7 +96,6 @@ include_directories(
   ${trajectory_msgs_INCLUDE_DIRS}
   ${sensor_msgs_INCLUDE_DIRS}
 )
-link_directories(src)
 
 # Library
 add_library(${PROJECT_NAME}
@@ -133,7 +141,7 @@ install(TARGETS
 )
 
 install(DIRECTORY include/
-  DESTINATION include/
+  DESTINATION include/${PROJECT_NAME}
 )
 
 install(DIRECTORY
