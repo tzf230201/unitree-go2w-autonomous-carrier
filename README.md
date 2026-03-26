@@ -3,7 +3,9 @@
 slide: https://tzf230201.github.io/unitree-go2w-autonomous-carrier/
 
 
-![alt text](image.png)
+<p align="center">
+	<img src="image_1.png" alt="Unitree" width="200" height="300" />
+</p>
 
 # How to Use this Repo
 
@@ -12,6 +14,13 @@ clone this repo
 ```
 git clone --recurse-submodules https://github.com/tzf230201/unitree-go2w-autonomous-carrier.git
 ```
+
+<p align="center">
+	<img src="image_2.png" alt="Unitree" width="400" />
+</p>
+	
+
+
 
 # Acknowledgement:
 
