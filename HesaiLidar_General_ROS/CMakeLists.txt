@@ -55,8 +55,10 @@ add_library(PandarGeneral
     src/HesaiLidar_General_SDK/src/PandarGeneralRaw/src/pandarGeneral_internal.cc
     src/HesaiLidar_General_SDK/src/PandarGeneralRaw/src/pcap_reader.cpp
     src/HesaiLidar_General_SDK/src/PandarGeneralRaw/src/pandarGeneral.cc
+    src/HesaiLidar_General_SDK/src/util.c
 )
 target_include_directories(PandarGeneral PRIVATE
+    src/HesaiLidar_General_SDK/
     src/HesaiLidar_General_SDK/src/PandarGeneralRaw/include
     src/HesaiLidar_General_SDK/src/PandarGeneralRaw/
     ${Boost_INCLUDE_DIRS}
