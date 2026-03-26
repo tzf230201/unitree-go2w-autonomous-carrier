@@ -8,13 +8,16 @@ slide: https://tzf230201.github.io/unitree-go2w-autonomous-carrier/
 </p>
 
 # How to Use this Repo
+1. go to workspace
+```
+cd ~/ros2_ws/src/
+```
 
-clone this repo
+2. clone this repo
 
 ```
 git clone --recurse-submodules https://github.com/tzf230201/unitree-go2w-autonomous-carrier.git
 ```
-
 <p align="center">
 	<img src="image_2.png" alt="Unitree" width="400" />
 </p>
