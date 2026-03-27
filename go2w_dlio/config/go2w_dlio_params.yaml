@@ -1,0 +1,5 @@
+/**:
+  ros__parameters:
+    use_sim_time: false
+    frames/lidar: hesai_lidar_tf
+    frames/imu: imu_link

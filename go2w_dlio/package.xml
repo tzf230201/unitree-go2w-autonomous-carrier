@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>go2w_dlio</name>
+  <version>0.1.0</version>
+  <description>Wrapper launch package for DLIO with Hesai LiDAR and Go2W IMU topics.</description>
+
+  <maintainer email="unitree@example.com">unitree</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>direct_lidar_inertial_odometry</exec_depend>
+  <exec_depend>go2w_joints_state_and_imu_publisher</exec_depend>
+  <exec_depend>odom_to_tf_ros2</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

@@ -1,0 +1,76 @@
+lidar:
+  - driver:
+      use_gpu: false
+      source_type: 1
+      lidar_udp_type:
+        device_ip_address: 192.168.123.20
+        udp_port: 2368
+        ptc_port: 9347
+        multicast_ip_address: ""
+        use_ptc_connected: true
+        host_ptc_port: 0
+        correction_file_path: ""
+        firetimes_path: ""
+        recv_point_cloud_timeout: -1
+        ptc_connect_timeout: -1
+        host_ip_address: ""
+        fault_message_port: 0
+        standby_mode: -1
+        speed: -1
+        ptc_mode: 0
+        certFile: ""
+        privateKeyFile: ""
+        caFile: ""
+
+      pcap_type:
+        pcap_path: ""
+        correction_file_path: ""
+        firetimes_path: ""
+        pcap_play_synchronization: true
+        pcap_play_in_loop: false
+        play_rate_: 1.0
+
+      rosbag_type:
+        correction_file_path: ""
+        firetimes_path: ""
+
+      serial_type:
+        rs485_com: ""
+        rs232_com: ""
+        point_cloud_baudrate: 3125000
+        correction_save_path: ""
+        correction_file_path: ""
+
+      use_timestamp_type: 1
+      frame_start_azimuth: 0
+      thread_num: 4
+      transform_flag: false
+      x: 0
+      y: 0
+      z: 0
+      roll: 0
+      pitch: 0
+      yaw: 0
+      fov_start: -1
+      fov_end: -1
+      channel_fov_filter_path: ""
+      multi_fov_filter_ranges: ""
+      enable_packet_loss_tool: true
+      distance_correction_flag: false
+      xt_spot_correction: false
+      device_udp_src_port: 0
+      device_fault_port: 0
+      frame_frequency: 0
+      default_frame_frequency: 20.0
+      echo_mode_filter: 0
+
+    ros:
+      ros_frame_id: hesai_lidar_tf
+      ros_recv_packet_topic: /lidar_packets
+      ros_send_packet_topic: /lidar_packets
+      ros_send_point_cloud_topic: /lidar_points
+      ros_send_imu_topic: /lidar_imu
+      ros_send_packet_loss_topic: /lidar_packets_loss
+      send_packet_ros: false
+      send_point_cloud_ros: true
+      send_imu_ros: false

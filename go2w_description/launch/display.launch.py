@@ -37,9 +37,9 @@ def generate_launch_description():
             parameters=[{"robot_description": robot_description}],
         ),
         Node(
-            package="go2w_joints_state_publisher",
-            executable="go2w_joints_state_publisher_node",
-            name="go2w_joints_state_publisher",
+            package="go2w_joints_state_and_imu_publisher",
+            executable="go2w_joints_state_and_imu_publisher_node",
+            name="go2w_joints_state_and_imu_publisher",
             output="screen",
         ),
         Node(

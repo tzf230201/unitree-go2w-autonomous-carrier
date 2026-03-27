@@ -27,7 +27,7 @@ git clone --recurse-submodules https://github.com/tzf230201/unitree-go2w-autonom
 
 # Acknowledgement:
 
-the go2w_joints_state_publisher is modified from this:
+the go2w_joints_state_and_imu_publisher is modified from this:
 https://github.com/felixokolo/go2_slam_2d_3d.git
 especiallly this part:
 https://github.com/felixokolo/go2_slam_2d_3d/tree/main/src/go2_joints_state_publisher
