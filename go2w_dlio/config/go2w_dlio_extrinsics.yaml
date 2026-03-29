@@ -1,0 +1,10 @@
+/**:
+  ros__parameters:
+    extrinsics/baselink2imu/t: [0.0, 0.0, 0.0]
+    extrinsics/baselink2imu/R: [1.0, 0.0, 0.0,
+                                0.0, 1.0, 0.0,
+                                0.0, 0.0, 1.0]
+    extrinsics/baselink2lidar/t: [0.1634, 0.0, 0.116]
+    extrinsics/baselink2lidar/R: [1.0, 0.0, 0.0,
+                                  0.0, 1.0, 0.0,
+                                  0.0, 0.0, 1.0]

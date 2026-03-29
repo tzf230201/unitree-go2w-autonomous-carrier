@@ -65,7 +65,7 @@ lidar:
       echo_mode_filter: 0
 
     ros:
-      ros_frame_id: hesai_lidar_tf
+      ros_frame_id: hesai_lidar
       ros_recv_packet_topic: /lidar_packets
       ros_send_packet_topic: /lidar_packets
       ros_send_point_cloud_topic: /lidar_points

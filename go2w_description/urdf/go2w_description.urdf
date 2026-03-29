@@ -22,7 +22,7 @@
   <link name="base_footprint" />
 
   <joint name="base_footprint_link" type="fixed">
-    <origin xyz="0 0 0.3" rpy="0 0 0" />
+    <origin xyz="0 0 0.4" rpy="0 0 0" />
     <parent link="base_footprint" />
     <child link="base_link" />
   </joint>
@@ -771,7 +771,7 @@
     <parent link="base_link" />
     <child link="hesai_lidar" />
     <!-- Hesai LiDAR is mounted with a 90deg yaw rotation (per hardware). -->
-    <!-- <origin xyz="0.145 0 0.11" rpy="0 0 1.57079632679" /> -->
-    <origin xyz="0.145 0 0.11" rpy="0 0 0" />
+    <origin xyz="0.145 0 0.11" rpy="0 0 1.57079632679" />
+    <!-- <origin xyz="0.145 0 0.11" rpy="0 0 0" /> -->
   </joint>
 </robot>
