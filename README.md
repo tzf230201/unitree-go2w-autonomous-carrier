@@ -22,6 +22,34 @@ git clone --recurse-submodules https://github.com/tzf230201/unitree-go2w-autonom
 	<img src="image_2.png" alt="Unitree" width="400" />
 </p>
 
+3. check out ros2 version of lio sam
+
+```
+cd LIO-SAM
+git checkout ros2
+```
+
+4. install dependencies
+
+```
+sudo apt install ros-humble-perception-pcl \
+  	   ros-humble-pcl-msgs \
+  	   ros-humble-vision-opencv \
+  	   ros-humble-xacro
+```
+```
+sudo apt install ros-humble-pcl-conversions
+sudo apt-get install libboost-all-dev
+sudo apt-get install -y libyaml-cpp-dev
+```
+
+5. build in your workspace
+```
+cd ~/ros2_ws
+colcon build --symlink-install
+```
+
+
 # Acknowledgement:
 
 the go2w_joints_state_and_imu_publisher is modified from this:

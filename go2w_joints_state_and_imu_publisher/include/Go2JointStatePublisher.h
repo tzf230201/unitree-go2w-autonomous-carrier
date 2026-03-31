@@ -84,7 +84,7 @@ private:
     std::string jointsStateTopic = "/joint_states";
     std::string lowStateTopic = "/lowstate";
     std::string imuTopic = "/imu_raw";
-    std::string imuFrameId = "imu_link";
+    std::string imuFrameId = "imu";
 
 
 };
