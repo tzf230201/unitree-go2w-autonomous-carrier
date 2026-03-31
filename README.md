@@ -21,15 +21,6 @@ git clone --recurse-submodules https://github.com/tzf230201/unitree-go2w-autonom
 <p align="center">
 	<img src="image_2.png" alt="Unitree" width="400" />
 </p>
-	
-
-3. get ros2 version of lio sam
-```
-cd LIO-SAM
-git checkout ros2
-cd ../..
-colcon build --symlink-install
-```
 
 # Acknowledgement:
 
