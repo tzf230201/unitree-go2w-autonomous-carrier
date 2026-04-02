@@ -137,7 +137,7 @@ def generate_launch_description():
         ],
     )
 
-    urdf_file = '/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/go2w_description/urdf/go2w_description.urdf'
+    urdf_file = '/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/go2w_description_modified/urdf/go2w_description.urdf'
     with open(urdf_file, 'r', encoding='utf-8') as f:
         robot_description = f.read()
 
