@@ -83,8 +83,8 @@ private:
     // rclcpp::Subscription<trajectory_msgs::msg::JointTrajectory>::SharedPtr joint_cmd_subscriber_;
     std::string jointsStateTopic = "/joint_states";
     std::string lowStateTopic = "/lowstate";
-    std::string imuTopic = "/imu_raw";
-    std::string imuFrameId = "imu_link";
+    std::string imuTopic = "/go2w/imu";
+    std::string imuFrameId = "imu";
 
 
 };
