@@ -14,16 +14,6 @@ install(
   DESTINATION share/${PROJECT_NAME}
 )
 
-# Install original URDF and meshes from unitree_ros (avoids modifying that package)
-install(
-  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../unitree_ros/robots/go2w_description/urdf/
-  DESTINATION share/${PROJECT_NAME}/urdf
-)
-install(
-  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../unitree_ros/robots/go2w_description/dae/
-  DESTINATION share/${PROJECT_NAME}/dae
-)
-
 install(
   PROGRAMS scripts/robot_description_publisher.py
   DESTINATION lib/${PROJECT_NAME}

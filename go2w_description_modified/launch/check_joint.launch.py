@@ -16,9 +16,6 @@ def generate_launch_description():
     rviz_config_path = os.path.join(desc_share, "launch", "check_joint.rviz")
 
     robot_description = xacro.process_file(xacro_path).toxml()
-    robot_description = robot_description.replace(
-        "package://go2w_description/", "package://go2w_description_modified/"
-    )
 
     actions = [
         DeclareLaunchArgument(

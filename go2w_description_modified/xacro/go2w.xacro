@@ -4,8 +4,8 @@
     <!-- Import sensor definitions -->
     <xacro:include filename="$(find go2w_description_modified)/xacro/sensors.xacro"/>
 
-    <!-- Include original URDF (copied from unitree_ros at build time) -->
-    <xacro:include filename="$(find go2w_description_modified)/urdf/go2w_description.urdf"/>
+    <!-- Include original URDF from go2w_description (root link is "base") -->
+    <xacro:include filename="$(find go2w_description)/urdf/go2w_description.urdf"/>
 
     <!-- Add base_footprint (ground projection) -->
     <link name="base_footprint" />
