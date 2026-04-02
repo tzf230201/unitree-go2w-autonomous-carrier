@@ -1,0 +1,23 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "/opt/ros/humble/include/**",
+                "/home/unitree/unitree_ros2/cyclonedds_ws/install/unitree_go/include/**",
+                "/home/unitree/unitree_ros2/cyclonedds_ws/install/unitree_api/include/**",
+                "/home/unitree/unitree_ros2/cyclonedds_ws/install/unitree_hg/include/**",
+                "/home/unitree/ros2_ws/install/go2w_joints_state_and_imu_publisher/include/**",
+                "/home/unitree/ros2_ws/install/hesai_ros_driver/include/**",
+                "/home/unitree/ros2_ws/install/lio_sam/include/**"
+            ],
+            "defines": [],
+            "compilerPath": "/usr/bin/g++",
+            "cStandard": "c17",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "linux-gcc-arm64"
+        }
+    ],
+    "version": 4
+}

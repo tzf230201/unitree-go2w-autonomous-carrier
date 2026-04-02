@@ -20,12 +20,16 @@ class HesaiToLioSamConverter : public rclcpp::Node
 public:
     HesaiToLioSamConverter() : Node("hesai_to_liosam_converter")
     {
+        auto input_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
+        auto output_qos = rclcpp::QoS(rclcpp::KeepLast(5)).reliable();
+        output_frame_ = declare_parameter<std::string>("output_frame", "lidar_link");
+
         sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
-            "input_cloud", rclcpp::SensorDataQoS(),
+            "input_cloud", input_qos,
             std::bind(&HesaiToLioSamConverter::callback, this, std::placeholders::_1));
 
         pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(
-            "output_cloud", rclcpp::SensorDataQoS());
+            "output_cloud", output_qos);
 
         RCLCPP_INFO(get_logger(), "HesaiToLioSamConverter started");
     }
@@ -36,18 +40,32 @@ private:
         const size_t n = static_cast<size_t>(msg->width) * msg->height;
         if (n == 0) return;
 
-        // --- Pass 1: find scan start time (minimum per-point timestamp) ---
-        double t0 = std::numeric_limits<double>::max();
+        // --- Pass 1: find scan start (t0) and scan end (t_max) hardware timestamps ---
+        double t0   = std::numeric_limits<double>::max();
+        double t_max = std::numeric_limits<double>::lowest();
         {
             sensor_msgs::PointCloud2ConstIterator<double> it(*msg, "timestamp");
             for (size_t i = 0; i < n; ++i, ++it) {
-                if (*it < t0) t0 = *it;
+                if (*it < t0)    t0    = *it;
+                if (*it > t_max) t_max = *it;
             }
         }
 
         // --- Build output cloud: same fields but 'time' (float32) instead of 'timestamp' (float64) ---
         sensor_msgs::msg::PointCloud2 out;
-        out.header      = msg->header;
+        out.header = msg->header;
+
+        // The Hesai hardware clock runs behind the system (ROS) clock by a fixed
+        // offset (~1-2 s on this platform).  LIO-SAM's imageProjection matches the
+        // cloud header stamp against IMU timestamps, which are on the system clock.
+        // Re-stamp the header so that its scan-start time is expressed in system
+        // time: place it (scan_duration) seconds before now(), so that
+        //   timeScanCur  = now() - scan_duration   (≈ system time of first point)
+        //   timeScanEnd  = timeScanCur + scan_duration ≈ now()
+        // and the IMU queue (also on the system clock) fully brackets the scan.
+        const double scan_duration = t_max - t0;
+        out.header.stamp = this->now() - rclcpp::Duration::from_seconds(scan_duration);
+        out.header.frame_id = output_frame_;
         out.height      = 1;
         out.width       = static_cast<uint32_t>(n);
         out.is_dense    = msg->is_dense;
@@ -96,6 +114,7 @@ private:
 
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_;
+    std::string output_frame_;
 };
 
 int main(int argc, char * argv[])

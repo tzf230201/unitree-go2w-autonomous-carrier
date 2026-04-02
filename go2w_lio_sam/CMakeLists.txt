@@ -8,6 +8,8 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(tf2 REQUIRED)
+find_package(unitree_go REQUIRED)
 
 add_executable(hesai_to_liosam_converter
   src/hesai_to_liosam_converter.cpp
@@ -17,7 +19,19 @@ ament_target_dependencies(hesai_to_liosam_converter
   sensor_msgs
 )
 
-install(TARGETS hesai_to_liosam_converter
+add_executable(lowstate_to_lio_imu
+  src/lowstate_to_lio_imu.cpp
+)
+ament_target_dependencies(lowstate_to_lio_imu
+  rclcpp
+  sensor_msgs
+  tf2
+  unitree_go
+)
+
+install(TARGETS
+  hesai_to_liosam_converter
+  lowstate_to_lio_imu
   DESTINATION lib/${PROJECT_NAME}
 )
 
