@@ -99,7 +99,7 @@ def run_gui(node):
     import tkinter as tk
 
     root = tk.Tk()
-    root.title("Unitree Go2 Remote Monitor")
+    root.title("Unitree Go2-W Remote Monitor")
     root.configure(bg="#1e1e1e")
     root.resizable(False, False)
 
@@ -141,7 +141,7 @@ def run_gui(node):
     rounded_rect(canvas, 170, 100, 530, 340, 10, fill=SCREEN_BG, outline="#333333")
 
     # Title on screen
-    canvas.create_text(350, 130, text="Unitree Go2 Remote Monitor",
+    canvas.create_text(350, 130, text="Unitree Go2-W Remote Monitor",
                        font=("monospace", 13, "bold"), fill="#00cc66")
     # Raw value on screen
     raw_text = canvas.create_text(350, 160, text="Button Raw: 0x0000",
