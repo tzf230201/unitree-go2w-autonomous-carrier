@@ -52,19 +52,6 @@ def generate_launch_description():
         parameters=[{"config_path": hesai_config_path}],
     )
 
-    # Hesai -> Velodyne format converter
-    # (timestamp float64 -> time float32 offset)
-    hesai_to_velodyne_node = Node(
-        package="go2w_fast_lio2",
-        executable="hesai_to_velodyne_converter",
-        name="hesai_to_velodyne_converter",
-        output="screen",
-        parameters=[
-            {"input_topic": "/lidar_points"},
-            {"output_topic": "/velodyne_points"},
-        ],
-    )
-
     # FAST-LIO2 mapping node (only if fast_lio is built)
     fast_lio_node = None
     if fast_lio_available:
@@ -128,7 +115,6 @@ def generate_launch_description():
         declare_rviz_arg,
         declare_rviz_cfg_arg,
         hesai_driver_node,
-        hesai_to_velodyne_node,
         body_to_base_link_tf,
         robot_description_publisher_node,
         robot_state_publisher_node,

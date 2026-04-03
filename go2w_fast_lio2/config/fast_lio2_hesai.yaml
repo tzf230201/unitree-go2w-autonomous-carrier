@@ -10,7 +10,7 @@
         map_file_path: "./test.pcd"
 
         common:
-            lid_topic: "/velodyne_points"
+            lid_topic: "/lidar_points"
             imu_topic: "/go2w/imu"
             time_sync_en: false
             time_offset_lidar_to_imu: 0.0
@@ -38,7 +38,7 @@
         publish:
             path_en: false
             scan_publish_en: true
-            dense_publish_en: true
+            dense_publish_en: false
             scan_bodyframe_pub_en: true
 
         pcd_save:
