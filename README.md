@@ -27,6 +27,8 @@ git clone --recurse-submodules https://github.com/tzf230201/unitree-go2w-autonom
 ```
 cd LIO-SAM
 git checkout ros2
+cd FAST_LIO
+git checkout ROS2
 ```
 
 4. install dependencies

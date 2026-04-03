@@ -9,8 +9,8 @@ lidar:
         multicast_ip_address: ""
         use_ptc_connected: true
         host_ptc_port: 0
-        correction_file_path: ""
-        firetimes_path: ""
+        correction_file_path: "/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/HesaiLidar_ROS_2.0/src/driver/HesaiLidar_SDK_2.0/correction/angle_correction/PandarXT-16_Angle Correction File.csv"
+        firetimes_path: "/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/HesaiLidar_ROS_2.0/src/driver/HesaiLidar_SDK_2.0/correction/firetime_correction/PandarXT-16_Firetime Correction File.csv"
         recv_point_cloud_timeout: -1
         ptc_connect_timeout: -1
         host_ip_address: ""
@@ -44,13 +44,13 @@ lidar:
       use_timestamp_type: 1
       frame_start_azimuth: 0
       thread_num: 4
-      transform_flag: false
+      transform_flag: true
       x: 0
       y: 0
       z: 0
       roll: 0
       pitch: 0
-      yaw: 0
+      yaw: 90
       fov_start: -1
       fov_end: -1
       channel_fov_filter_path: ""
@@ -61,7 +61,7 @@ lidar:
       device_udp_src_port: 0
       device_fault_port: 0
       frame_frequency: 0
-      default_frame_frequency: 20.0
+      default_frame_frequency: 10.0
       echo_mode_filter: 0
 
     ros:
