@@ -1,10 +1,19 @@
 import cv2, numpy as np, time
 from collections import defaultdict, deque
 
+try:
+    import pyrealsense2 as rs
+except ImportError:
+    rs = None
+
 # =======================
 # CONFIG
 # =======================
 CAM_INDEX = 0
+USE_REALSENSE = True
+RS_WIDTH = 640
+RS_HEIGHT = 480
+RS_FPS = 30
 DS_W, DS_H = 64, 48
 K = 5
 SMOOTH_ALPHA = 0.2
@@ -83,12 +92,63 @@ def draw_timeseries(panel, series, x0, y0, w, h, vmin, vmax, title):
     cv2.putText(panel, f"{vmin:+.4f}..{vmax:+.4f}", (x0+10, y0+h-8),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180,180,180), 1, cv2.LINE_AA)
 
+
+def open_video_source():
+    if USE_REALSENSE and rs is not None:
+        pipeline = rs.pipeline()
+        config = rs.config()
+        config.enable_stream(rs.stream.color, RS_WIDTH, RS_HEIGHT, rs.format.bgr8, RS_FPS)
+        try:
+            pipeline.start(config)
+            profile = pipeline.get_active_profile()
+            color_profile = profile.get_stream(rs.stream.color).as_video_stream_profile()
+            intr = color_profile.get_intrinsics()
+            print(
+                f"Video source: Intel RealSense color "
+                f"({intr.width}x{intr.height} @ {RS_FPS}fps)"
+            )
+            return {
+                "kind": "realsense",
+                "pipeline": pipeline,
+            }
+        except RuntimeError as exc:
+            print(f"RealSense unavailable, fallback to OpenCV camera: {exc}")
+
+    cap = cv2.VideoCapture(CAM_INDEX)
+    if not cap.isOpened():
+        raise RuntimeError(
+            f"Cannot open RealSense or camera index {CAM_INDEX}. "
+            f"Install pyrealsense2 and connect the device, or adjust CAM_INDEX."
+        )
+    print(f"Video source: OpenCV camera index {CAM_INDEX}")
+    return {
+        "kind": "opencv",
+        "cap": cap,
+    }
+
+
+def read_frame(source):
+    if source["kind"] == "realsense":
+        frames = source["pipeline"].wait_for_frames()
+        color_frame = frames.get_color_frame()
+        if not color_frame:
+            return False, None
+        frame = np.asanyarray(color_frame.get_data())
+        return True, frame
+
+    return source["cap"].read()
+
+
+def close_video_source(source):
+    if source["kind"] == "realsense":
+        source["pipeline"].stop()
+        return
+    source["cap"].release()
+
 # =======================
 # INIT
 # =======================
-cap = cv2.VideoCapture(CAM_INDEX)
-if not cap.isOpened():
-    raise RuntimeError(f"Cannot open camera {CAM_INDEX}")
+video_source = open_video_source()
 
 buf          = deque(maxlen=K+1)
 t_prev       = None
@@ -125,7 +185,7 @@ print("Keys: w/a/s/d/q/e=action, space=STOP, x=exit")
 # MAIN LOOP
 # =======================
 while True:
-    ret, frame = cap.read()
+    ret, frame = read_frame(video_source)
     if not ret: break
 
     key = cv2.waitKey(1) & 0xFF
@@ -260,7 +320,7 @@ while True:
 # =======================
 # CLEANUP + SUMMARY
 # =======================
-cap.release()
+close_video_source(video_source)
 cv2.destroyAllWindows()
 
 avg_v_deviation = total_viability_area / max(step_count, 1)
