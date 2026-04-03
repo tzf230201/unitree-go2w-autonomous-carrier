@@ -27,6 +27,7 @@ git clone --recurse-submodules https://github.com/tzf230201/unitree-go2w-autonom
 ```
 cd LIO-SAM
 git checkout ros2
+cd ..
 cd FAST_LIO
 git checkout ROS2
 ```
@@ -35,20 +36,43 @@ git checkout ROS2
 
 ```
 sudo apt install ros-humble-perception-pcl \
-  	   ros-humble-pcl-msgs \
-  	   ros-humble-vision-opencv \
-  	   ros-humble-xacro
-```
-```
-sudo apt install ros-humble-pcl-conversions
-sudo apt-get install libboost-all-dev
-sudo apt-get install -y libyaml-cpp-dev
+       ros-humble-pcl-msgs \
+       ros-humble-vision-opencv \
+       ros-humble-xacro \
+       ros-humble-pcl-conversions
+sudo apt-get install libboost-all-dev libyaml-cpp-dev
 ```
 
-5. build in your workspace
+5. install Livox SDK2 (required to build `livox_ros_driver2` and `fast_lio`)
+
+```bash
+cd /tmp
+git clone https://github.com/Livox-SDK/Livox-SDK2
+cd Livox-SDK2
+mkdir build && cd build
+cmake .. && make -j$(nproc)
+sudo make install
 ```
+
+6. build packages (must be built in order)
+
+```bash
 cd ~/ros2_ws
-colcon build --symlink-install
+
+# Build livox_ros_driver2 first (requires special cmake args for Humble)
+colcon build --packages-select livox_ros_driver2 \
+  --cmake-args -DROS_EDITION=ROS2 -DHUMBLE_ROS=humble
+
+# Build hesai_ros_driver
+colcon build --packages-select hesai_ros_driver
+
+# Source, then build fast_lio
+source install/setup.bash
+colcon build --packages-select fast_lio
+
+# Source, then build remaining packages
+source install/setup.bash
+colcon build
 ```
 
 

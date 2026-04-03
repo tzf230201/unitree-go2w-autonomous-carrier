@@ -1,6 +1,6 @@
 import os
 
-from ament_index_python.packages import get_package_share_directory
+from ament_index_python.packages import get_package_share_directory, PackageNotFoundError
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
@@ -17,7 +17,14 @@ def generate_launch_description():
     pkg_share = get_package_share_directory("go2w_fast_lio2")
     desc_share = get_package_share_directory("go2w_description_modified")
 
+    try:
+        fast_lio_share = get_package_share_directory("fast_lio")
+        fast_lio_available = True
+    except PackageNotFoundError:
+        fast_lio_available = False
+
     hesai_config_path = os.path.join(pkg_share, "config", "hesai_config.yaml")
+    fast_lio_config_path = os.path.join(pkg_share, "config")
     rviz_config_path = os.path.join(pkg_share, "launch", "fast_lio2.rviz")
 
     # ── Robot description (URDF from xacro) ────────────────────────────
@@ -36,7 +43,7 @@ def generate_launch_description():
 
     # ── Nodes ──────────────────────────────────────────────────────────
 
-    # Hesai LiDAR driver – pass config path via ROS parameter
+    # Hesai LiDAR driver
     hesai_driver_node = Node(
         package="hesai_ros_driver",
         executable="hesai_ros_driver_node",
@@ -45,7 +52,34 @@ def generate_launch_description():
         parameters=[{"config_path": hesai_config_path}],
     )
 
-    # Robot description publisher (custom node from go2w_description_modified)
+    # Hesai -> Velodyne format converter
+    # (timestamp float64 -> time float32 offset)
+    hesai_to_velodyne_node = Node(
+        package="go2w_fast_lio2",
+        executable="hesai_to_velodyne_converter",
+        name="hesai_to_velodyne_converter",
+        output="screen",
+        parameters=[
+            {"input_topic": "/lidar_points"},
+            {"output_topic": "/velodyne_points"},
+        ],
+    )
+
+    # FAST-LIO2 mapping node (only if fast_lio is built)
+    fast_lio_node = None
+    if fast_lio_available:
+        fast_lio_node = Node(
+            package="fast_lio",
+            executable="fastlio_mapping",
+            name="fastlio_mapping",
+            output="screen",
+            parameters=[
+                os.path.join(fast_lio_config_path, "fast_lio2_hesai.yaml"),
+                {"use_sim_time": False},
+            ],
+        )
+
+    # Robot description publisher
     robot_description_publisher_node = Node(
         package="go2w_description_modified",
         executable="robot_description_publisher.py",
@@ -54,7 +88,7 @@ def generate_launch_description():
         parameters=[{"robot_description": robot_description}],
     )
 
-    # Robot state publisher (transforms from joint states + URDF)
+    # Robot state publisher
     robot_state_publisher_node = Node(
         package="robot_state_publisher",
         executable="robot_state_publisher",
@@ -71,6 +105,15 @@ def generate_launch_description():
         output="screen",
     )
 
+    # Static TF: FAST_LIO "body" frame -> robot "base_link"
+    # FAST_LIO body = IMU frame, which is base_link on Go2W (identity transform)
+    body_to_base_link_tf = Node(
+        package="tf2_ros",
+        executable="static_transform_publisher",
+        name="body_to_base_link",
+        arguments=["0", "0", "0", "0", "0", "0", "body", "base_link"],
+    )
+
     # RViz2 (optional)
     rviz_node = Node(
         package="rviz2",
@@ -81,12 +124,19 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration("rviz")),
     )
 
-    return LaunchDescription([
+    actions = [
         declare_rviz_arg,
         declare_rviz_cfg_arg,
         hesai_driver_node,
+        hesai_to_velodyne_node,
+        body_to_base_link_tf,
         robot_description_publisher_node,
         robot_state_publisher_node,
         joints_imu_node,
         rviz_node,
-    ])
+    ]
+
+    if fast_lio_node is not None:
+        actions.insert(4, fast_lio_node)
+
+    return LaunchDescription(actions)

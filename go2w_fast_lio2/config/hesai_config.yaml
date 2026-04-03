@@ -50,7 +50,7 @@ lidar:
       z: 0
       roll: 0
       pitch: 0
-      yaw: 90
+      yaw: 1.5708
       fov_start: -1
       fov_end: -1
       channel_fov_filter_path: ""
