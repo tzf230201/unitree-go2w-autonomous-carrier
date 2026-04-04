@@ -13,3 +13,6 @@ pnpm-debug.log*
 
 # Python cache
 __pycache__/
+
+# IDE
+.vscode/
