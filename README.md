@@ -4,7 +4,7 @@ slide: https://tzf230201.github.io/unitree-go2w-autonomous-carrier/
 
 
 <p align="center">
-	<img src="image_1.png" alt="Unitree" width="200" height="300" />
+	<img src="images/image_1.png" alt="Unitree" width="200" height="300" />
 </p>
 
 # How to Use this Repo
@@ -19,7 +19,7 @@ cd ~/ros2_ws/src/
 git clone --recurse-submodules https://github.com/tzf230201/unitree-go2w-autonomous-carrier.git
 ```
 <p align="center">
-	<img src="image_2.png" alt="Unitree" width="400" />
+	<img src="images/image_2.png" alt="Unitree" width="400" />
 </p>
 
 3. check out ros2 version of lio sam

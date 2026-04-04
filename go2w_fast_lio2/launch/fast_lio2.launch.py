@@ -15,7 +15,7 @@ import xacro
 def generate_launch_description():
     # ── Package paths ──────────────────────────────────────────────────
     pkg_share = get_package_share_directory("go2w_fast_lio2")
-    desc_share = get_package_share_directory("go2w_description_modified")
+    desc_share = get_package_share_directory("go2w_description")
 
     try:
         fast_lio_share = get_package_share_directory("fast_lio")
@@ -68,7 +68,7 @@ def generate_launch_description():
 
     # Robot description publisher
     robot_description_publisher_node = Node(
-        package="go2w_description_modified",
+        package="go2w_description",
         executable="robot_description_publisher.py",
         name="robot_description_publisher",
         output="screen",

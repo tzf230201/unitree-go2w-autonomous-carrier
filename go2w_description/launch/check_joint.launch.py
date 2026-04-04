@@ -10,7 +10,7 @@ import xacro
 
 
 def generate_launch_description():
-    desc_share = get_package_share_directory("go2w_description_modified")
+    desc_share = get_package_share_directory("go2w_description")
 
     xacro_path = os.path.join(desc_share, "xacro", "go2w.xacro")
     rviz_config_path = os.path.join(desc_share, "launch", "check_joint.rviz")

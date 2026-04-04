@@ -9,7 +9,7 @@ import xacro
 
 
 def generate_launch_description():
-    desc_share = get_package_share_directory("go2w_description_modified")
+    desc_share = get_package_share_directory("go2w_description")
 
     xacro_path = os.path.join(desc_share, "xacro", "go2w.xacro")
     rviz_config_path = os.path.join(desc_share, "launch", "display.rviz")
@@ -23,7 +23,7 @@ def generate_launch_description():
             description="Path to an RViz config (.rviz).",
         ),
         Node(
-            package="go2w_description_modified",
+            package="go2w_description",
             executable="robot_description_publisher.py",
             name="robot_description_publisher",
             output="screen",
