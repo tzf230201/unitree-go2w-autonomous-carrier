@@ -16,11 +16,11 @@
             time_offset_lidar_to_imu: 0.0
 
         preprocess:
-            lidar_type: 2                # 2 for Velodyne-style (Hesai after conversion)
+            lidar_type: 2                # 2 for Velodyne-style
             scan_line: 16                # PandarXT-16 has 16 lines
-            scan_rate: 10                # 10 Hz
-            timestamp_unit: 0            # 0-second (converter outputs offset in seconds)
-            blind: 0.5
+            scan_rate: 20                # 20 Hz (matches hesai_config frame_frequency)
+            timestamp_unit: 0            # 0-second
+            blind: 2.0
 
         mapping:
             acc_cov: 0.1
@@ -38,9 +38,9 @@
         publish:
             path_en: false
             scan_publish_en: true
-            dense_publish_en: false
+            dense_publish_en: true
             scan_bodyframe_pub_en: true
 
         pcd_save:
-            pcd_save_en: false
+            pcd_save_en: true
             interval: -1
