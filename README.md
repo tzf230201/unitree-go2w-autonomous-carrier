@@ -83,7 +83,7 @@ colcon build
 ### 6. Run FAST-LIO2 with Hesai PandarXT-16
 ```bash
 source ~/ros2_ws/install/setup.bash
-ros2 launch go2w_fast_lio2 fast_lio2.launch.py
+ros2 launch go2w_fast_lio2 fast_lio2.launch.py rviz:=true
 ```
 
 This launches:
