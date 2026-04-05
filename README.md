@@ -7,6 +7,22 @@ slide: https://tzf230201.github.io/unitree-go2w-autonomous-carrier/
 	<img src="images/image_1.png" alt="Unitree" width="200" height="300" />
 </p>
 
+## Results
+
+The images below show the SLAM result and the real environment used in the experiment.
+
+<p align="center">
+	<img src="images/image_3.png" alt="SLAM map result" width="400" />
+</p>
+
+`image_3` shows the map produced by the SLAM pipeline.
+
+<p align="center">
+	<img src="images/image_4.png" alt="Real environment" width="400" />
+</p>
+
+`image_4` shows the real-world location corresponding to the SLAM experiment.
+
 ## Packages
 
 | Package | Description |
@@ -30,9 +46,6 @@ cd ~/ros2_ws/src/
 ```bash
 git clone --recurse-submodules https://github.com/tzf230201/unitree-go2w-autonomous-carrier.git
 ```
-<p align="center">
-	<img src="images/image_2.png" alt="Unitree" width="400" />
-</p>
 
 ### 3. Check out ROS 2 branch for LIO-SAM
 ```bash
@@ -101,6 +114,14 @@ colcon build --packages-select livox_ros_driver2 \
 source install/setup.bash
 colcon build --packages-select fast_lio
 ```
+
+## Legacy Navigation Result
+
+<p align="center">
+	<img src="images/image_2.png" alt="Legacy Nav2 result" width="400" />
+</p>
+
+`image_2` shows the Nav2 result from the older version using LIO-SAM (see Realeases V1) of the program and is kept here as a reference.
 
 ## Acknowledgement
 
