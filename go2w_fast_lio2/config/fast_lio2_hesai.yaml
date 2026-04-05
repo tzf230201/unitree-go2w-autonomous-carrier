@@ -1,10 +1,10 @@
 /**:
     ros__parameters:
         feature_extract_enable: false
-        point_filter_num: 2
-        max_iteration: 4
-        filter_size_surf: 0.3
-        filter_size_map: 0.3
+        point_filter_num: 3
+        max_iteration: 3
+        filter_size_surf: 0.5
+        filter_size_map: 0.5
         cube_side_length: 1000.0
         runtime_pos_log_enable: false
         map_file_path: "./test.pcd"
@@ -14,22 +14,24 @@
             imu_topic: "/go2w/imu"
             time_sync_en: false
             time_offset_lidar_to_imu: 0.0
+            odom_frame: "odom"
+            body_frame: "base_footprint"
 
         preprocess:
             lidar_type: 5                # 5 for Hesai (native timestamp float64)
             scan_line: 16                # PandarXT-16 has 16 lines
-            scan_rate: 10                # 10 Hz
+            scan_rate: 20                # 20 Hz (must match driver frame_frequency)
             timestamp_unit: 0            # not used for Hesai handler (converts internally)
             blind: 2.0
 
         mapping:
-            acc_cov: 0.1
-            gyr_cov: 0.1
+            acc_cov: 0.01
+            gyr_cov: 0.01
             b_acc_cov: 0.0001
             b_gyr_cov: 0.0001
             fov_degree: 360.0
             det_range: 100.0
-            extrinsic_est_en: false
+            extrinsic_est_en: true
             extrinsic_T: [ 0., 0., 0.28]
             extrinsic_R: [ 1., 0., 0.,
                            0., 1., 0.,
@@ -40,6 +42,10 @@
             scan_publish_en: true
             dense_publish_en: true
             scan_bodyframe_pub_en: true
+            odom_topic: "/Odometry"
+            cloud_topic: "/cloud_registered"
+            cloud_body_topic: "/cloud_registered_body"
+            path_topic: "/path"
 
         pcd_save:
             pcd_save_en: true

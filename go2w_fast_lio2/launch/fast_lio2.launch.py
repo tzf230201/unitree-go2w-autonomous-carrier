@@ -92,14 +92,7 @@ def generate_launch_description():
         output="screen",
     )
 
-    # Static TF: FAST_LIO "body" frame -> robot "base_link"
-    # FAST_LIO body = IMU frame, which is base_link on Go2W (identity transform)
-    body_to_base_link_tf = Node(
-        package="tf2_ros",
-        executable="static_transform_publisher",
-        name="body_to_base_link",
-        arguments=["0", "0", "0", "0", "0", "0", "body", "base_link"],
-    )
+
 
     # RViz2 (optional)
     rviz_node = Node(
@@ -115,7 +108,6 @@ def generate_launch_description():
         declare_rviz_arg,
         declare_rviz_cfg_arg,
         hesai_driver_node,
-        body_to_base_link_tf,
         robot_description_publisher_node,
         robot_state_publisher_node,
         joints_imu_node,
