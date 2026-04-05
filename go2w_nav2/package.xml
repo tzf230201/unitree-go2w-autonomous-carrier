@@ -22,7 +22,8 @@
   <exec_depend>nav2_costmap_2d</exec_depend>
   <exec_depend>nav2_amcl</exec_depend>
   <exec_depend>slam_toolbox</exec_depend>
-  <exec_depend>twist_mux</exec_depend>
+  <exec_depend>pointcloud_to_laserscan</exec_depend>
+  <exec_depend>go2w_odom_projector</exec_depend>
   <exec_depend>rviz2</exec_depend>
   <exec_depend>go2w_description</exec_depend>
   <exec_depend>go2w_fast_lio2</exec_depend>

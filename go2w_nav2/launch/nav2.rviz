@@ -13,7 +13,7 @@ Visualization Manager:
       Description Topic:
         Value: /robot_description
       Name: RobotModel
-      Value: true
+      Value: false
     - Class: rviz_default_plugins/TF
       Name: TF
       Value: true

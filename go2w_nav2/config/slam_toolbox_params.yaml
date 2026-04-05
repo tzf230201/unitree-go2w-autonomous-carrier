@@ -15,6 +15,8 @@ slam_toolbox:
     scan_topic: /scan
     use_sim_time: false
     mode: mapping  # localization or mapping
+    throttle_scans: 2
+    transform_publish_period: 0.02
 
     # Mapper params
     map_update_interval: 5.0
