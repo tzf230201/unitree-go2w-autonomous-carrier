@@ -75,6 +75,8 @@ PointCloudToLaserScanNode::PointCloudToLaserScanNode(const rclcpp::NodeOptions &
   range_max_ = this->declare_parameter("range_max", std::numeric_limits<double>::max());
   inf_epsilon_ = this->declare_parameter("inf_epsilon", 1.0);
   use_inf_ = this->declare_parameter("use_inf", true);
+  bool use_cloud_stamp = this->declare_parameter("use_cloud_stamp", false);
+  use_cloud_stamp_ = use_cloud_stamp;
 
   pub_ = this->create_publisher<sensor_msgs::msg::LaserScan>("scan", rclcpp::SensorDataQoS().reliable());
   //pub_ = this->create_publisher<sensor_msgs::msg::LaserScan>("scan", rclcpp::SensorDataQoS()); //default
@@ -143,9 +145,11 @@ void PointCloudToLaserScanNode::cloudCallback(
 {
   // build laserscan output
   auto scan_msg = std::make_unique<sensor_msgs::msg::LaserScan>();
-  // Preserve the source cloud timestamp so downstream TF lookups stay aligned
-  // with the odometry/TF published from the same FAST-LIO update.
-  scan_msg->header.stamp = cloud_msg->header.stamp;
+  if (use_cloud_stamp_) {
+    scan_msg->header.stamp = cloud_msg->header.stamp;
+  } else {
+    scan_msg->header.stamp = this->get_clock()->now();
+  }
   if (!target_frame_.empty()) {
     scan_msg->header.frame_id = target_frame_;
   } else {

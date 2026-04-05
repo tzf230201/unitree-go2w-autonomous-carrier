@@ -32,6 +32,7 @@ class OdomProjector(Node):
         self.base_frame = self.declare_parameter("base_frame", "base_footprint").value
         self.publish_tf = self.declare_parameter("publish_tf", True).value
         self.zero_initial_pose = self.declare_parameter("zero_initial_pose", True).value
+        self.use_input_stamp = self.declare_parameter("use_input_stamp", False).value
 
         self.initialized = False
         self.initial_x = 0.0
@@ -87,7 +88,10 @@ class OdomProjector(Node):
             twist_y = rotated_twist_y
 
         odom_msg = Odometry()
-        odom_msg.header.stamp = msg.header.stamp
+        if self.use_input_stamp:
+            odom_msg.header.stamp = msg.header.stamp
+        else:
+            odom_msg.header.stamp = self.get_clock().now().to_msg()
         odom_msg.header.frame_id = self.odom_frame
         odom_msg.child_frame_id = self.base_frame
         odom_msg.pose.pose.position.x = projected_x
@@ -136,6 +140,9 @@ def main(args=None) -> None:
     node = OdomProjector()
     try:
         rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()

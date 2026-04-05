@@ -92,6 +92,56 @@ This launches:
 - Go2W robot description & joint state publisher
 - RViz2 (optional, disable with `rviz:=false`)
 
+### 7. Run `go2w_nav2` SLAM and navigation
+
+The `go2w_nav2` SLAM launch now starts the required navigation stack around FAST-LIO2:
+- `go2w_fast_lio2` is launched automatically by default with FAST-LIO RViz disabled
+- `/Odometry` is projected into a planar `/odom`
+- FAST-LIO point cloud is converted into `/scan`
+- `slam_toolbox`, Nav2, RViz, and `go2w_cmd_vel_control` are launched together
+
+Run:
+
+```bash
+source ~/ros2_ws/install/setup.bash
+ros2 launch go2w_nav2 slam.launch.py
+```
+
+If you already launched FAST-LIO2 in another terminal, disable the internal include:
+
+```bash
+source ~/ros2_ws/install/setup.bash
+ros2 launch go2w_nav2 slam.launch.py launch_fast_lio:=false
+```
+
+Useful options:
+
+```bash
+# Disable Nav2 RViz
+ros2 launch go2w_nav2 slam.launch.py nav2_rviz:=false
+
+# Disable cmd_vel bridge to the robot
+ros2 launch go2w_nav2 slam.launch.py launch_cmd_vel_bridge:=false
+```
+
+How to use RViz:
+- Wait a few seconds until FAST-LIO2, SLAM, and Nav2 are all active.
+- Use `2D Pose Estimate` to set the robot initial pose on the map.
+- Use `2D Goal Pose` to send a navigation goal.
+- When navigation is successful, Nav2 publishes `/cmd_vel`, and `go2w_cmd_vel_control` forwards it to `/api/sport/request`.
+
+Important notes for successful `go2w_nav2` operation:
+- `go2w_nav2` depends on valid `/scan`, `/odom`, `/map`, and TF between `map -> odom -> base_footprint`.
+- The package includes a planar odometry projector and pointcloud-to-laserscan converter because Nav2 and `slam_toolbox` expect 2D navigation data.
+- The Nav2 behavior tree XML files must be set correctly. If they are empty, RViz goals are accepted but immediately fail with `Behavior tree threw exception: Empty Tree`.
+- If a goal is received but the robot does not move, check whether `/navigate_to_pose/_action/status` becomes `6` (`ABORTED`).
+- If old processes are still running, restart the launch completely after rebuilding:
+
+```bash
+source ~/ros2_ws/install/setup.bash
+ros2 launch go2w_nav2 slam.launch.py
+```
+
 ### (Optional) Livox LiDAR support
 
 If you want to use a Livox LiDAR instead, install Livox SDK2 and `livox_ros_driver2`:

@@ -34,6 +34,7 @@ def generate_launch_description():
     has_twist_mux = package_available("twist_mux")
     has_pointcloud_to_laserscan = package_available("pointcloud_to_laserscan")
     has_odom_projector = package_available("go2w_odom_projector")
+    has_cmd_vel_control = package_available("go2w_cmd_vel_control")
     if has_twist_mux:
         twist_mux_params_path = os.path.join(pkg_share, "config", "twist_mux_params.yaml")
 
@@ -62,6 +63,11 @@ def generate_launch_description():
         "launch_fast_lio",
         default_value="true",
         description="Launch go2w_fast_lio2 together with SLAM/Nav2 and keep FAST-LIO RViz disabled",
+    )
+    declare_launch_cmd_vel_bridge_arg = DeclareLaunchArgument(
+        "launch_cmd_vel_bridge",
+        default_value="true",
+        description="Launch go2w_cmd_vel_control to bridge /cmd_vel into /api/sport/request",
     )
 
     if has_fast_lio_launch:
@@ -119,7 +125,7 @@ def generate_launch_description():
             ],
             parameters=[{
                 "target_frame": "base_footprint",
-                "transform_tolerance": 0.05,
+                "transform_tolerance": 0.20,
                 "min_height": -0.15,
                 "max_height": 0.30,
                 "angle_min": -3.14159,
@@ -130,6 +136,7 @@ def generate_launch_description():
                 "range_max": 30.0,
                 "use_inf": True,
                 "inf_epsilon": 1.0,
+                "use_cloud_stamp": False,
             }],
         )
 
@@ -146,7 +153,21 @@ def generate_launch_description():
                 "base_frame": "base_footprint",
                 "publish_tf": True,
                 "zero_initial_pose": True,
+                "use_input_stamp": False,
             }],
+        )
+
+    if has_cmd_vel_control:
+        cmd_vel_control_node = Node(
+            package="go2w_cmd_vel_control",
+            executable="go2w_cmd_vel_control_node",
+            name="go2w_cmd_vel_control",
+            output="screen",
+            parameters=[{
+                "cmd_vel_topic": "/cmd_vel",
+                "request_topic": "/api/sport/request",
+            }],
+            condition=IfCondition(LaunchConfiguration("launch_cmd_vel_bridge")),
         )
 
     # ── Twist mux ─────────────────────────────────────────────────────
@@ -156,6 +177,7 @@ def generate_launch_description():
         declare_use_sim_time_arg,
         declare_rviz_arg,
         declare_launch_fast_lio_arg,
+        declare_launch_cmd_vel_bridge_arg,
     ]
 
     if has_fast_lio_launch:
@@ -198,6 +220,15 @@ def generate_launch_description():
         launch_actions.append(
             LogInfo(
                 msg="go2w_odom_projector package not found; /odom will need an external planar odometry publisher."
+            )
+        )
+
+    if has_cmd_vel_control:
+        launch_actions.append(cmd_vel_control_node)
+    else:
+        launch_actions.append(
+            LogInfo(
+                msg="go2w_cmd_vel_control package not found; /cmd_vel will need an external bridge to drive the robot."
             )
         )
 

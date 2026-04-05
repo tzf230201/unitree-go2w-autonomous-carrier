@@ -27,6 +27,7 @@
   <exec_depend>rviz2</exec_depend>
   <exec_depend>go2w_description</exec_depend>
   <exec_depend>go2w_fast_lio2</exec_depend>
+  <exec_depend>go2w_cmd_vel_control</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>
