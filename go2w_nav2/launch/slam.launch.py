@@ -5,7 +5,7 @@ from ament_index_python.packages import PackageNotFoundError, get_package_share_
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, LogInfo, TimerAction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch.conditions import IfCondition
 
 from launch_ros.actions import Node
@@ -29,6 +29,7 @@ def generate_launch_description():
         fast_lio_share = get_package_share_directory("go2w_fast_lio2")
 
     nav2_params_path = os.path.join(pkg_share, "config", "nav2_params.yaml")
+    nav2_mppi_params_path = os.path.join(pkg_share, "config", "nav2_params_mppi.yaml")
     slam_params_path = os.path.join(pkg_share, "config", "slam_toolbox_params.yaml")
     rviz_config_path = os.path.join(pkg_share, "launch", "nav2.rviz")
     has_twist_mux = package_available("twist_mux")
@@ -41,8 +42,13 @@ def generate_launch_description():
     # ── Launch arguments ───────────────────────────────────────────────
     declare_params_arg = DeclareLaunchArgument(
         "params_file",
-        default_value=nav2_params_path,
-        description="Full path to the Nav2 parameters file",
+        default_value="",
+        description="Optional full path to the Nav2 parameters file. If empty, it is selected from local_planner.",
+    )
+    declare_local_planner_arg = DeclareLaunchArgument(
+        "local_planner",
+        default_value="dwb",
+        description="Local planner profile to use when params_file is empty: dwb or mppi",
     )
     declare_slam_params_arg = DeclareLaunchArgument(
         "slam_params_file",
@@ -98,7 +104,23 @@ def generate_launch_description():
             os.path.join(nav2_bringup_share, "launch", "navigation_launch.py")
         ),
         launch_arguments={
-            "params_file": LaunchConfiguration("params_file"),
+            "params_file": PythonExpression([
+                '"',
+                nav2_params_path,
+                '" if "',
+                LaunchConfiguration("params_file"),
+                '" == "" and "',
+                LaunchConfiguration("local_planner"),
+                '" != "mppi" else "',
+                nav2_mppi_params_path,
+                '" if "',
+                LaunchConfiguration("params_file"),
+                '" == "" and "',
+                LaunchConfiguration("local_planner"),
+                '" == "mppi" else "',
+                LaunchConfiguration("params_file"),
+                '"'
+            ]),
             "use_sim_time": LaunchConfiguration("use_sim_time"),
         }.items(),
     )
@@ -173,6 +195,7 @@ def generate_launch_description():
     # ── Twist mux ─────────────────────────────────────────────────────
     launch_actions = [
         declare_params_arg,
+        declare_local_planner_arg,
         declare_slam_params_arg,
         declare_use_sim_time_arg,
         declare_rviz_arg,
