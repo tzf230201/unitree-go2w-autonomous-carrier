@@ -219,3 +219,26 @@ You now have:
 ✔ SSH accessible from WiFi
 
 ---
+sudo gedit /etc/X11/xorg.conf
+
+#Section "Device"
+#    Identifier "Configured Video Device"
+#    Driver "modesetting"
+#EndSection
+#
+#Section "Monitor"
+#    Identifier "Configured Monitor"
+#    HorizSync 28-80
+#    VertRefresh 48-75
+#EndSection
+#
+#Section "Screen"
+#    Identifier "Default Screen"
+#    Device "Configured Video Device"
+#    Monitor "Configured Monitor"
+#    DefaultDepth 24
+#    SubSection "Display"
+#        Depth 24
+#        Modes "1920x1080"
+#    EndSubSection
+#EndSection
