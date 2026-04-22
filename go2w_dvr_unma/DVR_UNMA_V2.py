@@ -1,4 +1,4 @@
-import cv2, numpy as np, time, os, struct, threading
+import cv2, numpy as np, time, os, struct, threading, csv, datetime, signal
 import pyrealsense2 as rs
 from collections import defaultdict, deque
 
@@ -25,6 +25,10 @@ RS_HEIGHT = 480
 RS_FPS    = 30
 
 LOWSTATE_TOPIC = "/lowstate"
+
+# CSV logs go here (one file per kind, all files share the same session_id prefix)
+LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+
 DS_W, DS_H    = 64, 48
 K             = 5
 SMOOTH_ALPHA  = 0.2
@@ -63,7 +67,7 @@ REGULATING_ALWAYS = True
 #   True  : viability anchor aktif
 #   False : tidak ada decay, regulasi, atau anchor (ablation)
 # --------------------------------------------------
-DVR_ENABLED = True
+DVR_ENABLED = False
 
 # --------------------------------------------------
 # Food scenario
@@ -74,10 +78,10 @@ DVR_ENABLED = True
 INVERT_FOOD = False
 
 # Tension bucket edges
-BUCKET_EDGES = (0.025, 0.07)
+BUCKET_EDGES = (0.05, 0.15)
 
 # UNMA reification thresholds
-MIN_SUPPORT_PAIR = 20
+MIN_SUPPORT_PAIR = 5
 MIN_MEAN_DV_PAIR = 0.001
 MAX_STD_DV_PAIR  = 0.003
 
@@ -246,6 +250,15 @@ remote = RemoteState()
 spin_thread = threading.Thread(target=rclpy.spin, args=(remote,), daemon=True)
 spin_thread.start()
 
+# Catch Ctrl+C: set a flag instead of raising, so the main loop can break cleanly
+# and the CSV/summary section still runs. Second Ctrl+C just re-sets the flag.
+_interrupted = False
+def _sigint_handler(signum, frame):
+    global _interrupted
+    _interrupted = True
+    print("\n[Ctrl+C received — finishing current frame, then saving logs]")
+signal.signal(signal.SIGINT, _sigint_handler)
+
 buf    = deque(maxlen=K+1)
 t_prev = None
 t_ema  = None
@@ -287,6 +300,15 @@ action_start_time  = time.time()
 action_log         = []
 action_tension_buf = []
 action_dv_buf      = []
+action_stick_buf   = []  # magnitude of the axis driving the current action (0..1)
+
+
+def stick_intensity_for(action, lx, ly, rx):
+    """Magnitude of the analog axis that drives the given action."""
+    if action in ("FORWARD", "BACK"):  return abs(ly)
+    if action in ("LEFT", "RIGHT"):    return abs(lx)
+    if action in ("ROT_L", "ROT_R"):   return abs(rx)
+    return 0.0  # STOP
 
 # Labels
 mode_label     = "DVR-ON" if DVR_ENABLED else "DVR-OFF (ablation)"
@@ -297,10 +319,36 @@ print(f"UNMA Stage 6 — {mode_label} | {poc_label} | {scenario_label}")
 print(f"Remote (via {LOWSTATE_TOPIC}): L-stick=move (WASD), R-stick X=rotate, "
       f"deadzone={STICK_DEADZONE}, {REMOTE_EXIT_BUTTON}=exit")
 
+# Session stem is fixed at start so the realtime timeseries log and the
+# final summary CSV share the same filename prefix.
+os.makedirs(LOG_DIR, exist_ok=True)
+session_id   = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+mode_tag     = "DVRon"  if DVR_ENABLED       else "DVRoff"
+scen_tag     = "S2inv"  if INVERT_FOOD       else "S1norm"
+poc_tag      = "always" if REGULATING_ALWAYS else "hunger"
+session_stem = f"{session_id}_{mode_tag}_{scen_tag}_{poc_tag}"
+
+# Realtime per-frame log of the values driving the UI graphs.
+# Flushed every frame so data survives a crash or power cut.
+ts_csv_path = os.path.join(LOG_DIR, f"{session_stem}_timeseries.csv")
+ts_csv_file = open(ts_csv_path, "w", newline="")
+ts_csv      = csv.writer(ts_csv_file)
+ts_csv.writerow([
+    "wall_iso", "wall_s", "step", "action",
+    "t_raw", "t_ema", "dv_reg", "v", "u", "food",
+    "tension_bucket", "regulating", "reif_count",
+    "lx", "ly", "rx", "stick_intensity",
+])
+ts_csv_file.flush()
+t_session_start = time.time()
+print(f"Realtime timeseries log: {ts_csv_path}")
+
 # =======================
 # MAIN LOOP
 # =======================
 while True:
+    if _interrupted: break
+
     ret, frame = read_frame(video_source)
     if not ret: break
 
@@ -311,27 +359,36 @@ while True:
     if REMOTE_EXIT_BUTTON in remote.pressed:
         break
 
+    # Snapshot current stick state (used for both action selection and logging)
+    cur_lx, cur_ly, cur_rx = remote.lx, remote.ly, remote.rx
+
     # Detect action change (from analog sticks) and log completed segment
-    new_action = action_from_sticks(remote.lx, remote.ly, remote.rx)
+    new_action = action_from_sticks(cur_lx, cur_ly, cur_rx)
     if new_action != active_action:
         duration    = time.time() - action_start_time
         mean_t      = float(np.mean(action_tension_buf)) if action_tension_buf else 0.0
         std_t       = float(np.std(action_tension_buf))  if action_tension_buf else 0.0
         mean_dv_act = float(np.mean(action_dv_buf))      if action_dv_buf      else 0.0
+        mean_stick  = float(np.mean(action_stick_buf))   if action_stick_buf   else 0.0
+        max_stick   = float(np.max(action_stick_buf))    if action_stick_buf   else 0.0
         action_log.append({
-            "action":      active_action,
-            "duration_s":  round(duration, 2),
+            "action":       active_action,
+            "duration_s":   round(duration, 2),
             "mean_tension": round(mean_t, 6),
             "std_tension":  round(std_t, 6),
             "mean_dv":      round(mean_dv_act, 6),
+            "mean_stick":   round(mean_stick, 4),
+            "max_stick":    round(max_stick, 4),
         })
         print(f"  [ACTION END] {active_action:8s} dur={duration:.2f}s "
-              f"mean_t={mean_t:.4f} std_t={std_t:.4f} mean_dv={mean_dv_act:+.6f}")
+              f"mean_t={mean_t:.4f} std_t={std_t:.4f} mean_dv={mean_dv_act:+.6f} "
+              f"mean_stick={mean_stick:.3f} max_stick={max_stick:.3f}")
 
         active_action      = new_action
         action_start_time  = time.time()
         action_tension_buf = []
         action_dv_buf      = []
+        action_stick_buf   = []
 
     # Preprocess frame
     gray  = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -351,6 +408,7 @@ while True:
     # Collect per-action buffers
     action_tension_buf.append(t_ema)
     action_dv_buf.append(dv_reg)
+    action_stick_buf.append(stick_intensity_for(active_action, cur_lx, cur_ly, cur_rx))
 
     # ===========================
     # DVR — zone activation
@@ -401,7 +459,12 @@ while True:
         pair_support[pending_edge] += 1
         pair_dv_hist[pending_edge].append(dv_reg)
 
-    if last_node is not None and node != last_node:
+    # Skip STOP at either endpoint — STOP is not an intentional "food-seeking"
+    # action, so edges involving it shouldn't count toward reification.
+    if (last_node is not None
+            and node != last_node
+            and last_node[0] != "STOP"
+            and node[0] != "STOP"):
         pending_edge = (last_node, node)
     else:
         pending_edge = None
@@ -445,6 +508,28 @@ while True:
     ts_t.append(t_ema)
     ts_dv.append(dv_reg)
     ts_v.append(v)
+
+    now = time.time()
+    ts_csv.writerow([
+        datetime.datetime.now().isoformat(timespec="milliseconds"),
+        round(now - t_session_start, 3),
+        step_count,
+        active_action,
+        round(t_raw, 6),
+        round(t_ema, 6),
+        round(dv_reg, 6),
+        round(v, 6),
+        round(u, 6),
+        round(effective_dv, 6),
+        tb,
+        int(regulating),
+        reification_count,
+        round(cur_lx, 4),
+        round(cur_ly, 4),
+        round(cur_rx, 4),
+        round(stick_intensity_for(active_action, cur_lx, cur_ly, cur_rx), 4),
+    ])
+    ts_csv_file.flush()
 
     hungry_label = "HUNGRY" if regulating else "FULL"
     cur_dur      = time.time() - action_start_time
@@ -527,13 +612,17 @@ if action_tension_buf:
     duration    = time.time() - action_start_time
     mean_t      = float(np.mean(action_tension_buf))
     std_t       = float(np.std(action_tension_buf))
-    mean_dv_act = float(np.mean(action_dv_buf)) if action_dv_buf else 0.0
+    mean_dv_act = float(np.mean(action_dv_buf))    if action_dv_buf    else 0.0
+    mean_stick  = float(np.mean(action_stick_buf)) if action_stick_buf else 0.0
+    max_stick   = float(np.max(action_stick_buf))  if action_stick_buf else 0.0
     action_log.append({
         "action":       active_action,
         "duration_s":   round(duration, 2),
         "mean_tension": round(mean_t, 6),
         "std_tension":  round(std_t, 6),
         "mean_dv":      round(mean_dv_act, 6),
+        "mean_stick":   round(mean_stick, 4),
+        "max_stick":    round(max_stick, 4),
     })
 
 close_video_source(video_source)
@@ -541,7 +630,103 @@ cv2.destroyAllWindows()
 remote.destroy_node()
 rclpy.try_shutdown()
 
+ts_csv_file.flush()
+ts_csv_file.close()
+print(f"Realtime timeseries log closed: {ts_csv_path}")
+
 avg_v_deviation = total_viability_area / max(step_count, 1)
+
+# =======================
+# CSV LOGS
+# (session_stem was already fixed at startup — shared with the realtime
+# timeseries log so both files have the same prefix)
+# =======================
+
+# Pre-compute aggregates for all sections
+action_agg_out = defaultdict(lambda: {"dur": 0.0, "tensions": [], "dvs": [],
+                                      "sticks": [], "max_stick": 0.0, "segs": 0})
+for e in action_log:
+    a = e["action"]
+    action_agg_out[a]["dur"]      += e["duration_s"]
+    action_agg_out[a]["tensions"].append(e["mean_tension"])
+    action_agg_out[a]["dvs"].append(e["mean_dv"])
+    action_agg_out[a]["sticks"].append(e["mean_stick"])
+    action_agg_out[a]["max_stick"] = max(action_agg_out[a]["max_stick"], e["max_stick"])
+    action_agg_out[a]["segs"]     += 1
+
+meta_final = []
+for e, cnt in pair_support.items():
+    if cnt < MIN_SUPPORT_PAIR:
+        continue
+    mdv, sdv = mean_std(pair_dv_hist[e])
+    if mdv >= MIN_MEAN_DV_PAIR and sdv <= MAX_STD_DV_PAIR:
+        meta_final.append((e, cnt, mdv, sdv))
+meta_final.sort(key=lambda x: (x[2], x[1]), reverse=True)
+
+# Write everything into a single CSV with section markers
+csv_path = os.path.join(LOG_DIR, f"{session_stem}.csv")
+with open(csv_path, "w", newline="") as f:
+    w = csv.writer(f)
+
+    # --- Section 1: Summary ---
+    w.writerow(["# SECTION", "summary"])
+    w.writerow(["session_id", "mode", "scenario", "poc",
+                "total_steps", "total_nodes", "total_edges",
+                "reification_count", "avg_abs_v_deviation",
+                "dvr_enabled", "invert_food", "regulating_always",
+                "v_low", "v_high", "v_star", "v_init",
+                "decay_alpha", "beta", "bucket_edges_lo", "bucket_edges_hi",
+                "stick_deadzone"])
+    w.writerow([session_id, mode_tag, scen_tag, poc_tag,
+                step_count, len(node_support), len(edge_support),
+                len(meta_final), round(avg_v_deviation, 6),
+                int(DVR_ENABLED), int(INVERT_FOOD), int(REGULATING_ALWAYS),
+                V_LOW, V_HIGH, V_STAR, V_INIT,
+                DECAY_ALPHA, BETA, BUCKET_EDGES[0], BUCKET_EDGES[1],
+                STICK_DEADZONE])
+    w.writerow([])
+
+    # --- Section 2: Per-segment action log ---
+    w.writerow(["# SECTION", "action_log"])
+    w.writerow(["seg_idx", "action", "duration_s", "mean_tension", "std_tension",
+                "mean_dv", "mean_stick", "max_stick"])
+    for i, e in enumerate(action_log):
+        w.writerow([i, e["action"], e["duration_s"], e["mean_tension"],
+                    e["std_tension"], e["mean_dv"],
+                    e["mean_stick"], e["max_stick"]])
+    w.writerow([])
+
+    # --- Section 3: Aggregated per-action ---
+    w.writerow(["# SECTION", "action_agg"])
+    w.writerow(["action", "total_dur_s", "mean_tension", "std_tension", "mean_dv",
+                "mean_stick", "max_stick", "segments"])
+    for a, agg in sorted(action_agg_out.items(), key=lambda x: x[1]["dur"], reverse=True):
+        mt   = float(np.mean(agg["tensions"])) if agg["tensions"] else 0.0
+        st   = float(np.std(agg["tensions"]))  if agg["tensions"] else 0.0
+        mdv  = float(np.mean(agg["dvs"]))      if agg["dvs"]      else 0.0
+        msk  = float(np.mean(agg["sticks"]))   if agg["sticks"]   else 0.0
+        w.writerow([a, round(agg["dur"], 2), round(mt, 6), round(st, 6),
+                    round(mdv, 6), round(msk, 4), round(agg["max_stick"], 4),
+                    agg["segs"]])
+    w.writerow([])
+
+    # --- Section 4: UNMA nodes ---
+    w.writerow(["# SECTION", "nodes"])
+    w.writerow(["action", "tension_bucket", "count", "mean_dv", "std_dv"])
+    for (act, tb), cnt in sorted(node_support.items(), key=lambda x: x[1], reverse=True):
+        mdv, sdv = mean_std(node_dv_hist[(act, tb)])
+        w.writerow([act, tb, cnt, round(mdv, 6), round(sdv, 6)])
+    w.writerow([])
+
+    # --- Section 5: Reification pairs ---
+    w.writerow(["# SECTION", "reification"])
+    w.writerow(["from_action", "from_bucket", "to_action", "to_bucket",
+                "count", "mean_dv", "std_dv"])
+    for (src, dst), cnt, mdv, sdv in meta_final:
+        w.writerow([src[0], src[1], dst[0], dst[1], cnt,
+                    round(mdv, 6), round(sdv, 6)])
+
+print(f"\nCSV log saved to {csv_path}")
 
 print(f"\n=== SUMMARY [{mode_label}] | [{poc_label}] | [{scenario_label}] ===")
 print(f"Total steps:        {step_count}")
@@ -551,13 +736,16 @@ print(f"Reification nodes:  {reification_count}")
 print(f"Avg |v - v*|:       {avg_v_deviation:.6f}  (lower = more stable)")
 
 print("\n=== MOVEMENT LOG (all segments) ===")
-print(f"  {'ACTION':<10} {'DUR(s)':>7}  {'MEAN_T':>9}  {'STD_T':>9}  {'MEAN_DV':>10}")
-print(f"  {'-'*10} {'-'*7}  {'-'*9}  {'-'*9}  {'-'*10}")
+print(f"  {'ACTION':<10} {'DUR(s)':>7}  {'MEAN_T':>9}  {'STD_T':>9}  "
+      f"{'MEAN_DV':>10}  {'MEAN_STK':>8}  {'MAX_STK':>7}")
+print(f"  {'-'*10} {'-'*7}  {'-'*9}  {'-'*9}  {'-'*10}  {'-'*8}  {'-'*7}")
 for entry in action_log:
     print(f"  {entry['action']:<10} {entry['duration_s']:>7.2f}  "
           f"{entry['mean_tension']:>9.6f}  "
           f"{entry['std_tension']:>9.6f}  "
-          f"{entry['mean_dv']:>+10.6f}")
+          f"{entry['mean_dv']:>+10.6f}  "
+          f"{entry['mean_stick']:>8.3f}  "
+          f"{entry['max_stick']:>7.3f}")
 
 print("\n=== PIXEL QUALITY PER ACTION (aggregated) ===")
 print(f"  {'ACTION':<10} {'TOTAL_DUR(s)':>13}  {'MEAN_T':>9}  {'STD_T':>9}  {'MEAN_DV':>10}  {'SEGMENTS':>9}")
