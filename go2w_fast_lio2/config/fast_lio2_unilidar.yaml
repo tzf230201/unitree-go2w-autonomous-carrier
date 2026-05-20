@@ -1,0 +1,55 @@
+/**:
+    ros__parameters:
+        point_filter_num: 3
+        point_filter_num_for_preprocessing: 1
+        max_iteration: 3
+        filter_size_map: 0.5
+        cube_side_length: 1000.0
+        verbose: false
+        pcl_verbose: false
+        runtime_pos_log_enable: false
+        map_file_path: "./test.pcd"
+        extrinsics_timeout_s: 10.0
+
+        common:
+            map_frame: "odom"
+            lidar_frame: "utlidar_lidar"
+            imu_frame: "imu"
+            base_frame: "base_footprint"
+            visualization_frame: "base"
+            time_sync_en: false
+
+        preprocess:
+            lidar_type: 2                # SPARK-Fast-LIO: 2 = Velodyne PointXYZIRT
+            scan_line: 18                # Unitree L1 has 18 scan lines
+            scan_rate: 10                # 10 Hz typical for L1
+            timestamp_unit: 0            # Unitree cloud `time` field is in seconds
+            blind: 0.5
+
+        mapping:
+            acc_cov: 0.01
+            gyr_cov: 0.01
+            b_acc_cov: 0.0001
+            b_gyr_cov: 0.0001
+            fov_degree: 360.0
+            det_range: 100.0
+            extrinsic_est_en: true
+            extrinsic_T: [ 0.28945, 0.0, -0.046825 ]
+            extrinsic_R: [ 0.573576,  -0.819152, 0.0,
+                          -0.819152,  -0.573576, 0.0,
+                           0.0,        0.0,     -1.0]
+
+        gravity_alignment:
+            enable_gravity_alignment: false
+
+        publish:
+            path_en: false
+            scan_publish_en: true
+            dense_publish_en: true
+            scan_lidarframe_pub_en: false
+            scan_bodyframe_pub_en: false
+            scan_baseframe_pub_en: true
+
+        pcd_save:
+            pcd_save_en: true
+            interval: -1

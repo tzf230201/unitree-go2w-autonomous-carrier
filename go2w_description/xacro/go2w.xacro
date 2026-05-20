@@ -18,4 +18,12 @@
     <!-- Add Hesai LiDAR -->
     <xacro:hesai_lidar_sensor parent_link="base"/>
 
+    <!-- Add UTLidar frame, position matches radar while orientation matches base -->
+    <link name="utlidar_lidar" />
+    <joint name="utlidar_lidar_joint" type="fixed">
+        <origin xyz="0.28945 0 -0.046825" rpy="-2.924065656505679 -0.14998090081098114 -0.9763385649215685" />
+        <parent link="base" />
+        <child link="utlidar_lidar" />
+    </joint>
+
 </robot>

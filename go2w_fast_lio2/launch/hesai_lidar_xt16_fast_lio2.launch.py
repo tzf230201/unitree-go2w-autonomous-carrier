@@ -25,7 +25,7 @@ def generate_launch_description():
 
     hesai_config_path = os.path.join(pkg_share, "config", "hesai_config.yaml")
     fast_lio_config_path = os.path.join(pkg_share, "config")
-    rviz_config_path = os.path.join(pkg_share, "launch", "fast_lio2.rviz")
+    rviz_config_path = os.path.join(pkg_share, "launch", "hesai_lidar_xt16_fast_lio2.rviz")
 
     # ── Robot description (URDF from xacro) ────────────────────────────
     xacro_path = os.path.join(desc_share, "xacro", "go2w.xacro")

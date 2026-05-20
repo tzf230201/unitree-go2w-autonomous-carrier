@@ -79,7 +79,7 @@ def generate_launch_description():
     if has_fast_lio_launch:
         fast_lio_launch = IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
-                os.path.join(fast_lio_share, "launch", "fast_lio2.launch.py")
+                os.path.join(fast_lio_share, "launch", "hesai_lidar_xt16_fast_lio2.launch.py")
             ),
             launch_arguments={
                 "rviz": "false",

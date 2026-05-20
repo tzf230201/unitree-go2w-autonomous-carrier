@@ -32,7 +32,7 @@ This package handles the full pipeline:
 | `FAST_LIO/src/laserMapping.cpp` | Changed subscriber QoS from `SensorDataQoS()` to depth 20 (RELIABLE) | Matches Hesai driver's RELIABLE QoS so messages are actually received |
 | `go2w_fast_lio2/config/fast_lio2_hesai.yaml` | `lid_topic`: `/velodyne_points` -> `/lidar_points` | Subscribe directly to driver output |
 | `go2w_fast_lio2/config/fast_lio2_hesai.yaml` | Tuned: `point_filter_num: 6`, `max_iteration: 2`, `filter_size_surf/map: 0.8`, `det_range: 50`, `dense_publish_en: false` | Reduce per-scan computation for higher frequency |
-| `go2w_fast_lio2/launch/fast_lio2.launch.py` | Removed `hesai_to_velodyne_converter` node | No longer needed |
+| `go2w_fast_lio2/launch/hesai_lidar_xt16_fast_lio2.launch.py` | Removed `hesai_to_velodyne_converter` node | No longer needed |
 
 ## Prerequisites
 
@@ -51,13 +51,13 @@ colcon build --packages-select go2w_fast_lio2
 source ~/ros2_ws/install/setup.bash
 
 # With RViz
-ros2 launch go2w_fast_lio2 fast_lio2.launch.py
+ros2 launch go2w_fast_lio2 hesai_lidar_xt16_fast_lio2.launch.py
 
 # Without RViz
-ros2 launch go2w_fast_lio2 fast_lio2.launch.py rviz:=false
+ros2 launch go2w_fast_lio2 hesai_lidar_xt16_fast_lio2.launch.py rviz:=false
 
 # Custom RViz config
-ros2 launch go2w_fast_lio2 fast_lio2.launch.py rviz_config:=/path/to/custom.rviz
+ros2 launch go2w_fast_lio2 hesai_lidar_xt16_fast_lio2.launch.py rviz_config:=/path/to/custom.rviz
 ```
 
 ## Config Files
