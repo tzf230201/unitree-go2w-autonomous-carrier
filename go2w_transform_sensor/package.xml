@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>go2w_transform_sensor</name>
+  <version>0.0.1</version>
+  <description>Rotate /utlidar/cloud to base-aligned orientation and restamp it with monotonic wall-clock time.</description>
+
+  <maintainer email="tzf230201@todo.todo">tzf230201</maintainer>
+  <license>TODO</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>sensor_msgs_py</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-transforms3d</exec_depend>
+  <exec_depend>ros2launch</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
