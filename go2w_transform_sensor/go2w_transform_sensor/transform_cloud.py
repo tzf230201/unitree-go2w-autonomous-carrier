@@ -45,6 +45,13 @@ class TransformCloud(Node):
             'reliable_qos', True).value
         self.publish_static_tf = self.declare_parameter(
             'publish_static_tf', True).value
+        # L1 measured ~15.4 Hz → scan period ~65 ms. Velodyne convention
+        # expects header.stamp = scan_start and per-point time = offset from
+        # start, so we subtract scan_period from arrival (= scan_end) to land
+        # on the correct scan_start. Fixes deskew window misalignment that
+        # manifests as translation drift during rotation.
+        self._scan_period_ns = int(
+            self.declare_parameter('scan_period_sec', 0.065).value * 1e9)
 
         # R_base_lidar: maps a vector in lidar coords into base orientation.
         self.R = euler2mat(roll, pitch, yaw, 'sxyz').astype(np.float32)
@@ -89,16 +96,21 @@ class TransformCloud(Node):
     def _monotonic_stamp(self):
         """Return a monotonically increasing wall-clock stamp (sec, nanosec).
 
-        - Aligns cloud timestamps to the same clock domain as /go2w/imu
-          (rclcpp::Clock::now()), eliminating the L1 firmware skew.
-        - Guarantees stamps never go backwards or repeat, so downstream
-          buffers (FAST-LIO/Point-LIO sync_packages) never time-loop.
+        - Uses arrival time minus scan_period so header.stamp lands on the
+          scan START (Velodyne convention: per-point `time` = offset from
+          start). Eliminates ~scan_period IMU-deskew window error that
+          causes translation drift during rotation.
+        - Same clock domain as /go2w/imu (rclcpp::Clock::now()), so the L1
+          firmware-vs-host skew is gone.
+        - Strict monotonic guard so downstream buffers
+          (FAST-LIO/Point-LIO sync_packages) never time-loop.
         """
-        now_ns = self.get_clock().now().nanoseconds
-        if self._last_stamp_ns is not None and now_ns <= self._last_stamp_ns:
-            now_ns = self._last_stamp_ns + 1000  # +1 us
-        self._last_stamp_ns = now_ns
-        return now_ns
+        arrival_ns = self.get_clock().now().nanoseconds
+        new_stamp_ns = arrival_ns - self._scan_period_ns
+        if self._last_stamp_ns is not None and new_stamp_ns <= self._last_stamp_ns:
+            new_stamp_ns = self._last_stamp_ns + 1000  # +1 us
+        self._last_stamp_ns = new_stamp_ns
+        return new_stamp_ns
 
     def cloud_callback(self, msg: PointCloud2):
         new_stamp_ns = self._monotonic_stamp()
