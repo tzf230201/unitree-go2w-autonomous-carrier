@@ -9,7 +9,9 @@
         pcl_verbose: false
         runtime_pos_log_enable: false
         map_file_path: "./test.pcd"
-        extrinsics_timeout_s: 10.0
+        extrinsics_timeout_s: 30.0     # 10 -> 30: launch race; TF tree from
+                                       # robot_state_publisher + transform_cloud
+                                       # sometimes not ready within 10s on Jetson
 
         common:
             map_frame: "odom"
@@ -33,6 +35,9 @@
             b_gyr_cov: 0.0001
             fov_degree: 360.0
             det_range: 100.0
+            # Stays false: LI-Init refinement diverges on this rig (see memory
+            # project_go2w_l1_calibrated_extrinsic). Online estimation makes
+            # odometry progressively worse over time — confirmed by user test.
             extrinsic_est_en: false
             # Cloud arrives via /utlidar/transformed_cloud already aligned to
             # base orientation by go2w_transform_sensor, so extrinsic_R = I.
@@ -45,7 +50,7 @@
                            0.0, 0.0, 1.0 ]
 
         gravity_alignment:
-            enable_gravity_alignment: true
+            enable_gravity_alignment: false
             acc_diff_thr: 0.2
             num_moving_frames_thr: 20
             num_gravity_measurements_thr: 20

@@ -37,7 +37,7 @@ amcl:
     z_max: 0.05
     z_rand: 0.5
     z_short: 0.05
-    scan_topic: /cloud_registered  # 3D point cloud from FAST-LIO2
+    scan_topic: /scan
 
 bt_navigator:
   ros__parameters:
@@ -177,7 +177,7 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 1.0
-        inflation_radius: 0.1
+        inflation_radius: 0.35
       always_send_full_costmap: true
 
 global_costmap:

@@ -22,10 +22,11 @@ Go2JointStatePublisher::Go2JointStatePublisher(std::string nodeName)
     // jointState.effort.resize(NUM_OF_JOINTS);   // Joint efforts
 
     freqDivCount = 0;
+    lastStampNs = 0;
     clock_ptr = this->get_clock();
 
     for (size_t i = 0; i < NUM_OF_JOINTS; ++i)
-    { 
+    {
         jointState.name[i] = jointNames[i];
     }
 
@@ -100,11 +101,15 @@ void Go2JointStatePublisher::lowStateCallback(const unitree_go::msg::LowState::S
     imuState.linear_acceleration.y = msg->imu_state.accelerometer[1];
     imuState.linear_acceleration.z = msg->imu_state.accelerometer[2];
 
-    // rclcpp::Time now = clock.now();
-    // rclcpp::Time now = steady_clock.now();
-    rclcpp::Time now = clock_ptr->now();
-    sec = now.seconds();
-    nanosec = now.nanoseconds() % 1000000000; // get only the nano seconds part of the returned value
+    // Point-LIO requires strictly increasing IMU stamps. Guard against small
+    // wall-clock adjustments so the downstream synchronizer does not reset.
+    int64_t stampNs = clock_ptr->now().nanoseconds();
+    if (stampNs <= lastStampNs) {
+        stampNs = lastStampNs + 1000;  // +1 us
+    }
+    lastStampNs = stampNs;
+    sec = static_cast<int32_t>(stampNs / 1000000000LL);
+    nanosec = static_cast<uint32_t>(stampNs % 1000000000LL);
     publishJointsState();
     publishImu();
     freqDivCount = 0;

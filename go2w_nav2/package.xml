@@ -24,6 +24,8 @@
   <exec_depend>nav2_amcl</exec_depend>
   <exec_depend>slam_toolbox</exec_depend>
   <exec_depend>pointcloud_to_laserscan</exec_depend>
+  <exec_depend>point_lio_unilidar</exec_depend>
+  <exec_depend>go2w_transform_sensor</exec_depend>
   <exec_depend>go2w_odom_projector</exec_depend>
   <exec_depend>rviz2</exec_depend>
   <exec_depend>go2w_description</exec_depend>

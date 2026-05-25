@@ -22,6 +22,9 @@ setup(
     entry_points={
         'console_scripts': [
             'transform_cloud = go2w_transform_sensor.transform_cloud:main',
+            'data_diag = go2w_transform_sensor.data_diag:main',
+            'ring_cloud = go2w_transform_sensor.ring_cloud:main',
+            'utlidar_ground_scan = go2w_transform_sensor.utlidar_ground_scan:main',
         ],
     },
 )

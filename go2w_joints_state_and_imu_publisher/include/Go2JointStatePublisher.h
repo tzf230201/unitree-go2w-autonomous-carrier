@@ -4,6 +4,7 @@
 #define NUM_OF_JOINTS 16
 #define FREQ_DIV 1
 
+#include <cstdint>
 #include <stdio.h>
 #include <string>
 
@@ -38,8 +39,9 @@ private:
     rclcpp::Clock steady_clock;
 
     rclcpp::Clock clock;
-    double sec;
-    int64_t nanosec;
+    int32_t sec;
+    uint32_t nanosec;
+    int64_t lastStampNs;
     int freqDivCount;
 
     // Index mapping for LowState motor_state

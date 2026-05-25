@@ -857,20 +857,20 @@ int main(int argc, char **argv)
     Lidar_T_wrt_IMU << VEC_FROM_ARRAY(extrinT);
     Lidar_R_wrt_IMU << MAT_FROM_ARRAY(extrinR);
 
-    if (extrinsic_est_en)
+    // Always apply yaml extrinsic to KF state, regardless of extrinsic_est_en.
+    // When est_en=false the KF state is the FIXED extrinsic.
+    // When est_en=true it's the INITIAL value and KF refines from there.
+    // (Original code only set it when est_en=true, which silently used T=0,R=I
+    // as a fixed extrinsic — wrong for any setup with non-trivial lever arm.)
+    if (!use_imu_as_input)
     {
-
-        if (!use_imu_as_input)
-        {
-            kf_output.x_.offset_R_L_I = Lidar_R_wrt_IMU;
-            kf_output.x_.offset_T_L_I = Lidar_T_wrt_IMU;
-        }
-
-        else
-        {
-            kf_input.x_.offset_R_L_I = Lidar_R_wrt_IMU;
-            kf_input.x_.offset_T_L_I = Lidar_T_wrt_IMU;
-        }
+        kf_output.x_.offset_R_L_I = Lidar_R_wrt_IMU;
+        kf_output.x_.offset_T_L_I = Lidar_T_wrt_IMU;
+    }
+    else
+    {
+        kf_input.x_.offset_R_L_I = Lidar_R_wrt_IMU;
+        kf_input.x_.offset_T_L_I = Lidar_T_wrt_IMU;
     }
 
     p_imu->lidar_type = p_pre->lidar_type = lidar_type;

@@ -18,8 +18,10 @@
             # Cut each 65 ms L1 scan into ~3 sub-frames of ~22 ms so each
             # KF update covers a smaller motion window. Drastically reduces
             # intra-scan deskew error during aggressive rotation/translation.
+            # Smaller sub-frames = less intra-scan motion per KF update.
+            # 0.011 s -> ~6 sub-frames per 65 ms L1 scan.
             cut_frame: true
-            cut_frame_time_interval: 0.022
+            cut_frame_time_interval: 0.011
             time_lag_imu_to_lidar: 0.0
 
         preprocess:
@@ -32,11 +34,14 @@
 
         mapping:
             imu_en: true
-            start_in_aggressive_motion: false
-            extrinsic_est_en: false       # lock to calibrated extrinsic
+            start_in_aggressive_motion: true   # robot may start while moving
+            extrinsic_est_en: false       # locked to KF-converged values below
             imu_time_inte: 0.002          # /go2w/imu = /lowstate at 500 Hz (FREQ_DIV=1)
-            satu_acc: 30.0
-            satu_gyro: 35.0
+            # Raised from 30/35 — Go2W aggressive trot can spike >3g momentarily
+            # and yaw rates exceeding 2000 deg/s during fast spins. Saturated
+            # IMU samples corrupt the bias estimate, persists as drift.
+            satu_acc: 50.0
+            satu_gyro: 50.0
             acc_norm: 9.81
             lidar_meas_cov: 0.01
             acc_cov_output: 500.0
@@ -53,18 +58,21 @@
             det_range: 100.0
 
             gravity_align: true
-            gravity: [ 0.0, 0.0, -9.810 ]
-            gravity_init: [ 0.0, 0.0, -9.810 ]
+            # IMU /go2w/imu measured stationary magnitude = 9.58 m/s^2 (not 9.81)
+            # via data_diag. 2.3% scale/bias error. Setting yaml to actual value
+            # eliminates -0.23 m/s^2 constant residual that integrates to drift.
+            gravity: [ 0.0, 0.0, -9.58 ]
+            gravity_init: [ 0.0, 0.0, -9.58 ]
 
-            # Cloud already base-aligned by go2w_transform_sensor -> R = I.
-            # T = lidar origin in IMU frame:
-            #   lidar in base   = (0.28945,  0,      -0.046825)  [xacro radar_joint]
-            #   body IMU in base= (-0.02557, 0,       0.04232)   [memory]
-            #   delta           = ( 0.31502, 0,      -0.089145)
-            extrinsic_T: [ 0.31502, 0.0, -0.089145 ]
-            extrinsic_R: [ 1.0, 0.0, 0.0,
-                           0.0, 1.0, 0.0,
-                           0.0, 0.0, 1.0 ]
+            # Locked to KF-converged values from extrinsic_est_en=true session.
+            # T converged near zero (NOT the geometric 0.315 m lever arm) — strongly
+            # suggests /utlidar/cloud already has the lidar-to-body translation
+            # compensated by Unitree firmware. Residual R is sub-1° refinement
+            # on top of go2w_transform_sensor's rotation.
+            extrinsic_T: [ -0.0153, -0.0015, -0.001 ]
+            extrinsic_R: [  1.0,         0.00704,    0.0107,
+                           -0.0070,      1.0,       -0.0037,
+                           -0.0107,      0.0036,     1.0    ]
 
         odometry:
             publish_odometry_without_downsample: true
