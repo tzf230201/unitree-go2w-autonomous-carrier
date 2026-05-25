@@ -19,13 +19,13 @@ OLLAMA_URL = "http://localhost:11434/api/generate"
 DEFAULT_MODEL = "qwen2.5:7b"
 DEFAULT_CONTEXT = 2048   # smaller context keeps memory comfortable on Orin NX
 SYSTEM_PROMPT = (
-    "You are a friendly robot assistant. Respond concisely in 1-3 short "
-    "sentences using plain English suitable for text-to-speech. "
-    "No markdown, no emojis, no lists."
+    "You are a friendly robot assistant. Reply in ONE short sentence "
+    "(under 25 words) using plain English suitable for text-to-speech. "
+    "No markdown, no emojis, no lists. Keep it punchy."
 )
 
 
-def ask_ollama(prompt: str, model: str, num_predict: int = 120,
+def ask_ollama(prompt: str, model: str, num_predict: int = 60,
                num_ctx: int = DEFAULT_CONTEXT) -> str:
     payload = {
         "model": model,

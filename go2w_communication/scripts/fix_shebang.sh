@@ -13,7 +13,7 @@ if [[ ! -x "$VENV_PY" ]]; then
   exit 1
 fi
 
-for f in "$PKG_DIR"/chat "$PKG_DIR"/speak; do
+for f in "$PKG_DIR"/chat "$PKG_DIR"/chat_stream "$PKG_DIR"/chat_webrtc "$PKG_DIR"/speak; do
   if [[ -f "$f" ]]; then
     sed -i "1s|^#!.*|#!$VENV_PY|" "$f"
     echo "Patched $f -> $VENV_PY"

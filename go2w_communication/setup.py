@@ -21,6 +21,8 @@ setup(
         "console_scripts": [
             "speak = go2w_communication.speak:main",
             "chat = go2w_communication.chat:main",
+            "chat_stream = go2w_communication.chat_stream:main",
+            "chat_webrtc = go2w_communication.chat_webrtc:main",
         ],
     },
 )

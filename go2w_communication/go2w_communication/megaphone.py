@@ -30,9 +30,9 @@ ENTER_MEGAPHONE = 4001
 EXIT_MEGAPHONE = 4002
 UPLOAD_MEGAPHONE = 4003
 
-TARGET_RATE = 44100
+TARGET_RATE = 44100      # Go2W audiohub firmware expects 44.1 kHz; 22050 plays at 2x speed
 CHUNK_SIZE = 4096
-INTER_CHUNK_DELAY = 0.1
+INTER_CHUNK_DELAY = 0.05  # 0.1 = safe but slow, 0.03 = chunks drop. 0.05 is a tested middle ground.
 
 
 def wav_from_pcm(raw_pcm: bytes, src_rate: int, channels: int = 1) -> bytes:
@@ -72,14 +72,13 @@ class MegaphonePlayer:
         req.parameter = json.dumps(params, ensure_ascii=True)
         self._pub.publish(req)
 
-    def play_wav(self, wav_blob: bytes, tail_wait: float = 0.8):
-        """Stream a WAV blob through the speaker and wait for it to finish."""
+    @staticmethod
+    def _wav_duration(wav_blob: bytes) -> float:
+        return max(0.0, (len(wav_blob) - 44) / TARGET_RATE / 2)
+
+    def _upload_chunks(self, wav_blob: bytes):
         b64 = base64.b64encode(wav_blob).decode("ascii")
         chunks = [b64[i : i + CHUNK_SIZE] for i in range(0, len(b64), CHUNK_SIZE)]
-
-        self._call(ENTER_MEGAPHONE, {})
-        time.sleep(0.1)
-
         for i, ch in enumerate(chunks, 1):
             self._call(
                 UPLOAD_MEGAPHONE,
@@ -92,10 +91,31 @@ class MegaphonePlayer:
             )
             time.sleep(INTER_CHUNK_DELAY)
 
-        # Approximate audio duration in seconds (16-bit mono).
-        audio_seconds = len(wav_blob) / TARGET_RATE / 2
-        time.sleep(max(1.5, audio_seconds + tail_wait))
+    def play_wav(self, wav_blob: bytes, tail_wait: float = 0.8):
+        """Stream one WAV blob and block until playback finishes."""
+        self._call(ENTER_MEGAPHONE, {})
+        time.sleep(0.1)
+        self._upload_chunks(wav_blob)
+        time.sleep(max(1.5, self._wav_duration(wav_blob) + tail_wait))
+        self._call(EXIT_MEGAPHONE, {})
+        time.sleep(0.2)
 
+    # ---------- streaming-friendly API ----------
+
+    def stream_open(self):
+        """Enter megaphone mode for an upcoming series of uploads."""
+        self._call(ENTER_MEGAPHONE, {})
+        time.sleep(0.1)
+
+    def stream_send(self, wav_blob: bytes) -> float:
+        """Upload one WAV's chunks immediately. Returns its audio duration (s)."""
+        self._upload_chunks(wav_blob)
+        return self._wav_duration(wav_blob)
+
+    def stream_close(self, remaining_seconds: float = 0.0,
+                     tail_wait: float = 0.8):
+        """Wait for queued audio to finish, then exit megaphone mode."""
+        time.sleep(max(1.0, remaining_seconds + tail_wait))
         self._call(EXIT_MEGAPHONE, {})
         time.sleep(0.2)
 
