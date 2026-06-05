@@ -1,0 +1,4 @@
+/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/go2w_dd_gng/build_linux/CMakeFiles/drawstuff.dir
+/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/go2w_dd_gng/build_linux/CMakeFiles/DepthSensor_Buggy.dir
+/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/go2w_dd_gng/build_linux/CMakeFiles/edit_cache.dir
+/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/go2w_dd_gng/build_linux/CMakeFiles/rebuild_cache.dir

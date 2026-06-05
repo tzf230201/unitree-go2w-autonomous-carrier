@@ -1,0 +1,2 @@
+/usr/bin/ar qc libdrawstuff.a CMakeFiles/drawstuff.dir/third_party/drawstuff/src/drawstuff.cpp.o CMakeFiles/drawstuff.dir/third_party/drawstuff/src/x11.cpp.o
+/usr/bin/ranlib libdrawstuff.a
