@@ -1,18 +1,33 @@
-"""All-in-one launch:
-   - open_manipulator_x_bringup hardware.launch.py    (ros2_control + Dynamixel)
-   - go2w_remote_arm teleop_node                       (remote -> direct joint trajectory)
+"""Self-contained launch for the current arm (joint1-6 + gripper, 7 motors).
 
-Remote joint buttons:
-   Left/Right arrows -> joint1, Down/Up arrows -> joint2,
-   A/Y -> joint3, X/B -> joint4, L1/L2 -> gripper.
+`teleop_node` opens /dev/ttyUSB0 directly (dynamixel_sdk). Do NOT also start
+`open_manipulator_x_bringup` — it would fight for the port and assumes the
+old 4-DOF arm with IDs 11-15.
+
+Hardware:
+  joint1   XM430-W350   ID 31
+  joint2   XM430-W350   ID 32
+  joint3   XM430-W350   ID 33
+  joint4   XM430-W210   ID 24
+  joint5   XM430-W350   ID 35
+  joint6   XM430-W210   ID 26
+  gripper  XM430-W350   ID 37
+
+Remote mapping:
+  D-pad Left  / Right          → joint1  - / +    (button hold = move)
+  D-pad Down  / Up             → joint2  - / +
+  A           / Y              → joint3  - / +
+  X           / B              → joint4  - / +
+  Right stick down / up (ry)   → joint5  - / +    (analog, proportional)
+  R1          / R2             → joint6  - / +
+  L1                           → gripper OPEN
+  L2                           → gripper CLOSE
 """
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument, TimerAction
-from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import PathJoinSubstitution, LaunchConfiguration
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
-from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
@@ -21,34 +36,55 @@ def generate_launch_description():
         default_value="0.5",
         description="Joint velocity in rad/s while a remote button is held.",
     )
-
-    hardware = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(PathJoinSubstitution([
-            FindPackageShare("open_manipulator_x_bringup"), "launch", "hardware.launch.py",
-        ])),
+    device_arg = DeclareLaunchArgument(
+        "device", default_value="/dev/ttyUSB0",
+        description="Serial device for U2D2.",
     )
 
-    remote_arm = TimerAction(
-        period=3.0,
-        actions=[Node(
-            package="go2w_remote_arm",
-            executable="teleop_node",
-            name="go2w_remote_arm",
-            output="screen",
-            parameters=[{
-                "joint_names": ["joint1", "joint2", "joint3", "joint4"],
-                "joint_velocity": ParameterValue(
-                    LaunchConfiguration("joint_velocity"),
-                    value_type=float,
-                ),
-                "button_joint_signs": [1.0, 1.0, 1.0, 1.0],
-            }],
-            emulate_tty=True,
-        )],
+    teleop = Node(
+        package="go2w_remote_arm",
+        executable="teleop_node",
+        name="go2w_remote_arm",
+        output="screen",
+        parameters=[{
+            "device": LaunchConfiguration("device"),
+            "baudrate": 1000000,
+
+            # ---- 7-motor config (joint1-6 + gripper) ----
+            "joint_names": [
+                "joint1", "joint2", "joint3", "joint4",
+                "joint5", "joint6", "gripper",
+            ],
+            "motor_ids": [31, 32, 33, 24, 35, 26, 37],
+            "joint_velocity": ParameterValue(
+                LaunchConfiguration("joint_velocity"),
+                value_type=float,
+            ),
+            "joint_signs": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+            # joint i uses analog axis (0=lx,1=ly,2=rx,3=ry) if >=0, else
+            # falls back to button_pairs. joint5 is on ry (right stick up/down).
+            "joint_axes": [-1, -1, -1, -1, 3, -1],
+            # bit indices: 0=R1 1=L1 2=Start 3=Select 4=R2 5=L2 6=F1 7=F3
+            # 8=A 9=B 10=X 11=Y 12=Up 13=Right 14=Down 15=Left
+            # joint5 buttons unused (analog mode) → -1 placeholder.
+            "button_pairs": [
+                15, 13,  # j1: Left  / Right
+                14, 12,  # j2: Down  / Up
+                 8, 11,  # j3: A     / Y
+                10,  9,  # j4: X     / B
+                -1, -1,  # j5: (analog ry)
+                 0,  4,  # j6: R1    / R2
+            ],
+            "gripper_btn_open": 1,    # L1
+            "gripper_btn_close": 5,   # L2
+            "gripper_open_target": -1.0,
+            "gripper_close_target": 0.0,
+        }],
+        emulate_tty=True,
     )
 
     return LaunchDescription([
         joint_velocity_arg,
-        hardware,
-        remote_arm,
+        device_arg,
+        teleop,
     ])
