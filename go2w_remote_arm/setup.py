@@ -12,6 +12,7 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', glob('launch/*.py')),
+        ('share/' + package_name + '/systemd', glob('systemd/*.service')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -22,6 +23,7 @@ setup(
     entry_points={
         'console_scripts': [
             'teleop_node = go2w_remote_arm.teleop_node:main',
+            'arm_launcher = go2w_remote_arm.launcher_node:main',
         ],
     },
 )

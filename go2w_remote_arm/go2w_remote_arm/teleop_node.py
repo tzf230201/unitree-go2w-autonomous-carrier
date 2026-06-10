@@ -53,13 +53,17 @@ from dynamixel_sdk import (
 
 
 # ---------- Dynamixel XM430 / XL430 control table (Protocol 2.0) ----------
+ADDR_DRIVE_MODE = 10            # 1 byte (bit 2: 0=Velocity-based, 1=Time-based profile)
 ADDR_OPERATING_MODE = 11        # 1 byte
 ADDR_TORQUE_ENABLE = 64         # 1 byte
 ADDR_HARDWARE_ERROR = 70        # 1 byte
-ADDR_PROFILE_ACCEL = 108        # 4 bytes
-ADDR_PROFILE_VELOCITY = 112     # 4 bytes
+ADDR_PROFILE_ACCEL = 108        # 4 bytes (velocity-based: rev/min²·1/214.577; time-based: ms)
+ADDR_PROFILE_VELOCITY = 112     # 4 bytes (velocity-based: rev/min·1/0.229;   time-based: ms)
 ADDR_GOAL_POSITION = 116        # 4 bytes
 ADDR_PRESENT_POSITION = 132     # 4 bytes
+
+DRIVE_MODE_VELOCITY_BASED = 0x00
+DRIVE_MODE_TIME_BASED = 0x04
 LEN_GOAL = 4
 LEN_PRESENT = 4
 LEN_PROFILE = 4
@@ -85,6 +89,12 @@ def _u32(v: int) -> bytes:
 
 def _s32(b: int) -> int:
     return b - (1 << 32) if b >= (1 << 31) else b
+
+
+# Button bit positions on the Go2W wireless_remote.
+# F3 (bit 7) is owned by the launcher node (starts/stops this teleop process).
+# F1 (bit 6) is intercepted here for the park-and-release routine.
+BTN_F1 = 1 << 6
 
 
 class TeleopNode(Node):
@@ -141,6 +151,19 @@ class TeleopNode(Node):
         self.declare_parameter("run_acc", 30)
         self.declare_parameter("settle_seconds", 0.5)
 
+        # startup centering via Time-based Profile (trapezoidal/triangular)
+        self.declare_parameter("center_on_startup", True)
+        self.declare_parameter("center_total_time_s", 4.0)
+        self.declare_parameter("center_accel_time_s", 2.0)
+        # Center target per motor in rad. Length 1 → broadcast to all; longer
+        # vector is taken in order (joint1, joint2, ..., gripper).
+        self.declare_parameter("center_position_rad", [0.0])
+
+        # After the F1 park sequence, disable torque on every motor whose ID
+        # is NOT in this list. Default keeps joint1 (ID 31) and joint4 (ID 24)
+        # torque ON to match the boot-time torque state set by the launcher.
+        self.declare_parameter("release_torque_except_ids", [31, 24])
+
         # ---- read parameters ----
         self.device = str(self.get_parameter("device").value)
         self.baud = int(self.get_parameter("baudrate").value)
@@ -177,6 +200,9 @@ class TeleopNode(Node):
         self.grip_close = float(self.get_parameter("gripper_close_target").value)
         self.grip_min = float(self.get_parameter("gripper_min").value)
         self.grip_max = float(self.get_parameter("gripper_max").value)
+        self.keep_torque_ids = [
+            int(x) for x in self.get_parameter("release_torque_except_ids").value
+        ]
 
         # ---- bus init ----
         self.port = PortHandler(self.device)
@@ -186,6 +212,70 @@ class TeleopNode(Node):
         if not self.port.setBaudRate(self.baud):
             raise IOError(f"failed to set baud {self.baud}")
 
+        # ---- discovery: ping each configured motor; drop non-responsive ones ----
+        # Allows running with partial hardware (e.g. joint5/6 not yet plugged).
+        self.get_logger().info(f"Pinging {self.motor_ids}...")
+        live_arm_idx: List[int] = []
+        gripper_live = False
+        for orig_idx, mid in enumerate(self.motor_ids):
+            is_gripper = (orig_idx == self.n_total - 1)
+            ok = False
+            for retry in range(2):
+                _, rc, err = self.packet.ping(self.port, mid)
+                if rc == COMM_SUCCESS and err == 0:
+                    ok = True
+                    break
+            label = self.joint_names[orig_idx]
+            if ok:
+                self.get_logger().info(f"  ID {mid:3d} ({label}): OK")
+                if is_gripper:
+                    gripper_live = True
+                else:
+                    live_arm_idx.append(orig_idx)
+            else:
+                self.get_logger().warn(
+                    f"  ID {mid:3d} ({label}): no response — skipping"
+                )
+
+        if not live_arm_idx and not gripper_live:
+            raise RuntimeError(
+                "no motors responded — check 12V power, U2D2 cable, daisy chain"
+            )
+
+        # filter per-joint arrays to live arm joints, then append gripper if live
+        def _take(seq, idxs):
+            return [seq[i] for i in idxs]
+
+        new_motor_ids = _take(self.motor_ids, live_arm_idx)
+        new_joint_names = _take(self.joint_names, live_arm_idx)
+        new_joint_signs = _take(self.joint_signs, live_arm_idx)
+        new_joint_axes = _take(self.joint_axes, live_arm_idx)
+        new_joint_min = _take(self.joint_min, live_arm_idx)
+        new_joint_max = _take(self.joint_max, live_arm_idx)
+        new_button_pairs = _take(self.button_pairs, live_arm_idx)
+
+        if gripper_live:
+            new_motor_ids.append(self.motor_ids[-1])
+            new_joint_names.append(self.joint_names[-1])
+
+        self.motor_ids = new_motor_ids
+        self.joint_names = new_joint_names
+        self.joint_signs = new_joint_signs
+        self.joint_axes = new_joint_axes
+        self.joint_min = new_joint_min
+        self.joint_max = new_joint_max
+        self.button_pairs = new_button_pairs
+        self.n_arm = len(live_arm_idx)
+        self.n_total = len(self.motor_ids)
+        self.gripper_live = gripper_live
+
+        self.get_logger().info(
+            f"Active: {self.n_arm} arm joint(s) + "
+            f"{'1 gripper' if gripper_live else 'no gripper'}  "
+            f"({self.motor_ids})"
+        )
+
+        # ---- now build sync read/write groups with the LIVE motor list ----
         self.sync_read = GroupSyncRead(
             self.port, self.packet, ADDR_PRESENT_POSITION, LEN_PRESENT
         )
@@ -203,28 +293,42 @@ class TeleopNode(Node):
             self.port, self.packet, ADDR_PROFILE_ACCEL, LEN_PROFILE
         )
 
-        # ping
-        self.get_logger().info(f"Pinging {self.motor_ids}...")
-        for mid in self.motor_ids:
-            _, rc, err = self.packet.ping(self.port, mid)
-            if rc != COMM_SUCCESS or err != 0:
-                raise RuntimeError(
-                    f"ping ID {mid} failed: rc={rc} err={err} "
-                    f"({self.packet.getTxRxResult(rc)})"
-                )
-        self.get_logger().info("all motors responded.")
-
         # auto-clear stale Hardware Error flags via Reboot
         self._clear_hw_errors_via_reboot()
+
+        # save run profile so centering can revert to it afterwards
+        self._run_vel = int(self.get_parameter("run_vel").value)
+        self._run_acc = int(self.get_parameter("run_acc").value)
 
         # gentle torque-on
         present = self._gentle_torque_on(
             int(self.get_parameter("startup_slow_vel").value),
             int(self.get_parameter("startup_slow_acc").value),
-            int(self.get_parameter("run_vel").value),
-            int(self.get_parameter("run_acc").value),
+            self._run_vel,
+            self._run_acc,
             float(self.get_parameter("settle_seconds").value),
         )
+
+        # ---- snapshot: positions read BEFORE torque was enabled ----
+        # F1 (park-and-release) will use this as the return target.
+        self.initial_pose: List[float] = list(present)
+        self._parking = False
+        self.get_logger().info(
+            f"Initial pose snapshot (pre-torque): "
+            f"{[round(v, 3) for v in self.initial_pose]}"
+        )
+
+        # ---- optional startup centering (Time-based Trapezoidal Profile) ----
+        if bool(self.get_parameter("center_on_startup").value):
+            total_s = float(self.get_parameter("center_total_time_s").value)
+            accel_s = float(self.get_parameter("center_accel_time_s").value)
+            cp = [float(x) for x in self.get_parameter("center_position_rad").value]
+            if len(cp) == 1:
+                target = [cp[0]] * self.n_total
+            else:
+                target = (cp + [0.0] * self.n_total)[: self.n_total]
+            self._center_all_servos(target, total_s, accel_s)
+            present = target  # goal_rad will reflect the centered pose
 
         # state — goals are in joint-frame radians, indexed same as motor_ids
         self.goal_rad: List[float] = list(present)
@@ -330,6 +434,106 @@ class TeleopNode(Node):
         self._set_profile(run_vel, run_acc)
         return present
 
+    # ---------------- centering ----------------
+    def _center_all_servos(
+        self,
+        target_rad: List[float],
+        total_s: float,
+        accel_s: float,
+    ) -> None:
+        """Drive every live motor to `target_rad` using the XM430 Time-based
+        Profile so motion is a trapezoid (or triangle if accel_s == total_s/2).
+
+        Profile Velocity → total movement time (ms)
+        Profile Acceleration → acceleration time (ms)
+        Deceleration time = total - accel (firmware infers it).
+
+        After motion completes, Drive Mode is reverted to velocity-based and
+        the normal run profile is restored so teleop jog behaves as usual.
+        """
+        if not target_rad:
+            return
+        total_ms = max(0, int(round(total_s * 1000)))
+        accel_ms = max(0, int(round(accel_s * 1000)))
+        # Firmware requires accel_ms <= total_ms / 2 for a valid trapezoid.
+        if accel_ms > total_ms // 2:
+            accel_ms = total_ms // 2
+        decel_ms = total_ms - accel_ms
+
+        self.get_logger().info(
+            f"Centering → {[round(v, 2) for v in target_rad]}  "
+            f"(accel={accel_ms}ms cruise={total_ms - 2*accel_ms}ms "
+            f"decel={decel_ms}ms total={total_ms}ms)"
+        )
+
+        # 1) torque OFF (Drive Mode lives in EEPROM, can't change while torqued)
+        for mid in self.motor_ids:
+            self._write1(mid, ADDR_TORQUE_ENABLE, 0)
+        # 2) Drive Mode = Time-based Profile
+        for mid in self.motor_ids:
+            self._write1(mid, ADDR_DRIVE_MODE, DRIVE_MODE_TIME_BASED)
+        # 3) Profile Velocity = total time (ms), Profile Acceleration = accel time (ms)
+        self._set_profile(total_ms, accel_ms)
+        # 4) torque ON
+        for mid in self.motor_ids:
+            self._write1(mid, ADDR_TORQUE_ENABLE, 1)
+        # 5) goal positions = target
+        self._write_goals_rad(target_rad)
+        # 6) wait for motion to finish, plus a small buffer
+        time.sleep(total_s + 0.3)
+        # 7) revert: torque OFF
+        for mid in self.motor_ids:
+            self._write1(mid, ADDR_TORQUE_ENABLE, 0)
+        # 8) Drive Mode = Velocity-based
+        for mid in self.motor_ids:
+            self._write1(mid, ADDR_DRIVE_MODE, DRIVE_MODE_VELOCITY_BASED)
+        # 9) restore normal teleop profile
+        self._set_profile(self._run_vel, self._run_acc)
+        # 10) torque ON
+        for mid in self.motor_ids:
+            self._write1(mid, ADDR_TORQUE_ENABLE, 1)
+
+        self.get_logger().info("Centering complete; ready for teleop.")
+
+    def _park_and_release(self) -> None:
+        """F1 routine: move arm back to the pre-torque initial pose using the
+        same Time-based trapezoidal profile, then disable torque on every motor
+        and ask rclpy to shut the node down. After this the launcher will
+        notice the child died and reset to "press F3 to start again"."""
+        if self._parking:
+            return
+        self._parking = True
+        try:
+            total_s = float(self.get_parameter("center_total_time_s").value)
+            accel_s = float(self.get_parameter("center_accel_time_s").value)
+            self.get_logger().info(
+                f"F1 → parking to initial pose "
+                f"{[round(v, 3) for v in self.initial_pose]}"
+            )
+            # keep _tick (if it fires) from yanking the arm back: align goal
+            # with the destination first.
+            with self.lock:
+                self.goal_rad = list(self.initial_pose)
+
+            self._center_all_servos(self.initial_pose, total_s, accel_s)
+
+            self.get_logger().info(
+                f"Releasing torque (keeping ON for IDs {self.keep_torque_ids})"
+            )
+            for mid in self.motor_ids:
+                if mid in self.keep_torque_ids:
+                    self.get_logger().info(f"  ID {mid}: torque kept ON")
+                    continue
+                self._write1(mid, ADDR_TORQUE_ENABLE, 0)
+                self.get_logger().info(f"  ID {mid}: torque OFF")
+
+            self.get_logger().info("Park complete — shutting down.")
+        finally:
+            try:
+                rclpy.shutdown()
+            except Exception:
+                pass
+
     # ---------------- error recovery ----------------
     def _clear_hw_errors_via_reboot(self) -> None:
         """Read each motor's Hardware Error register; reboot any that has a
@@ -365,6 +569,7 @@ class TeleopNode(Node):
 
     # ---------------- remote ----------------
     def _on_remote(self, msg: WirelessController) -> None:
+        f1_pressed = False
         with self.lock:
             self.prev_keys = self.keys
             self.keys = int(msg.keys)
@@ -373,18 +578,27 @@ class TeleopNode(Node):
             )
             self.last_remote_t = time.monotonic()
 
-            # edge-triggered gripper
             rising = (~self.prev_keys) & self.keys
-            if rising & (1 << self.grip_btn_open):
-                self.goal_rad[-1] = self._clamp_grip(self.grip_open)
-                self.get_logger().info(
-                    f"gripper OPEN → {self.goal_rad[-1]:+.2f}"
-                )
-            if rising & (1 << self.grip_btn_close):
-                self.goal_rad[-1] = self._clamp_grip(self.grip_close)
-                self.get_logger().info(
-                    f"gripper CLOSE → {self.goal_rad[-1]:+.2f}"
-                )
+
+            # F1 → park & release (must be handled OUTSIDE the lock)
+            if rising & BTN_F1 and not self._parking:
+                f1_pressed = True
+
+            # edge-triggered gripper (only if gripper motor responded at startup)
+            if self.gripper_live and not self._parking:
+                if rising & (1 << self.grip_btn_open):
+                    self.goal_rad[-1] = self._clamp_grip(self.grip_open)
+                    self.get_logger().info(
+                        f"gripper OPEN → {self.goal_rad[-1]:+.2f}"
+                    )
+                if rising & (1 << self.grip_btn_close):
+                    self.goal_rad[-1] = self._clamp_grip(self.grip_close)
+                    self.get_logger().info(
+                        f"gripper CLOSE → {self.goal_rad[-1]:+.2f}"
+                    )
+
+        if f1_pressed:
+            self._park_and_release()
 
     def _clamp(self, j_idx: int, v: float) -> float:
         if j_idx < len(self.joint_min):
@@ -405,6 +619,8 @@ class TeleopNode(Node):
 
     # ---------------- main loop ----------------
     def _tick(self) -> None:
+        if self._parking:
+            return  # _park_and_release owns the bus during the trapezoidal move
         with self.lock:
             keys = self.keys
             axes = self.axes

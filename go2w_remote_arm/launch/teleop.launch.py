@@ -24,7 +24,9 @@ Remote mapping:
   L2                           → gripper CLOSE
 """
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, EmitEvent, RegisterEventHandler
+from launch.event_handlers import OnProcessExit
+from launch.events import Shutdown
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
@@ -83,8 +85,19 @@ def generate_launch_description():
         emulate_tty=True,
     )
 
+    # Make `ros2 launch` exit immediately when teleop_node dies (e.g. after
+    # the F1 park-and-release sequence). Without this, the launch parent stays
+    # alive a few seconds waiting for cleanup, and the launcher node would
+    # still see the child as "running" — so a quick F3 after F1 would be
+    # interpreted as toggle-OFF instead of toggle-ON.
+    exit_when_teleop_dies = RegisterEventHandler(
+        OnProcessExit(target_action=teleop,
+                       on_exit=[EmitEvent(event=Shutdown())])
+    )
+
     return LaunchDescription([
         joint_velocity_arg,
         device_arg,
         teleop,
+        exit_when_teleop_dies,
     ])
