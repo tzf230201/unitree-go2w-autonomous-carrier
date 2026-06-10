@@ -1,0 +1,20 @@
+# SECTION,summary
+session_id,mode,scenario,poc,total_steps,total_nodes,total_edges,reification_count,avg_abs_v_deviation,dvr_enabled,invert_food,regulating_always,v_low,v_high,v_star,v_init,decay_alpha,beta,bucket_edges_lo,bucket_edges_hi,stick_deadzone
+20260610_235520,DVRoff,S1norm,always,9425,3,0,0,0.0,0,0,1,0.4,0.8,0.8,0.8,0.00022,0.001,0.05,0.15,0.3
+
+# SECTION,action_log
+seg_idx,action,duration_s,mean_tension,std_tension,mean_dv,mean_stick,max_stick
+0,STOP,369.85,0.014994,0.036394,-0.0,0.0,0.0
+
+# SECTION,action_agg
+action,total_dur_s,mean_tension,std_tension,mean_dv,mean_stick,max_stick,segments
+STOP,369.85,0.014994,0.0,0.0,0.0,0.0,1
+
+# SECTION,nodes
+action,tension_bucket,count,mean_dv,std_dv
+STOP,L,8361,-0.0,6e-06
+STOP,M,862,-0.000103,0.004331
+STOP,H,202,-0.000152,0.003355
+
+# SECTION,reification
+from_action,from_bucket,to_action,to_bucket,count,mean_dv,std_dv

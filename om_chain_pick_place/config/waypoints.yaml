@@ -1,0 +1,31 @@
+# Pick-and-place waypoints (joint-space form is safest — bypasses IK ambiguity).
+#
+# Snapshot helper:
+#   1. Pose the arm in RViz to the target spot
+#   2. ros2 service call /snapshot_waypoint std_srvs/srv/Trigger
+#   3. Paste the printed `joint:` line into the right entry below.
+#
+# `joint:` order is [joint1, joint2, joint3, joint4, joint5, joint6] (rad).
+# Alternative forms still supported:  `named: rest` or `xyz: [..] rpy: [..]`.
+
+waypoints:
+  start_pose:
+    named: rest
+
+  # Initial guesses derived from the joint state right after the previous
+  # `pick_above` (Cartesian) waypoint succeeded — known to be reachable.
+  pick_above:
+    joint: [-0.603, -0.413, 1.758, -2.014, -0.816, 2.083]
+
+  # `pick` = lower the EE by tilting joint2 forward a bit (~+0.2 rad).
+  # ⚠ TUNE THIS via /snapshot_waypoint to match your actual object height.
+  pick:
+    joint: [-0.603, -0.213, 1.758, -2.014, -0.816, 2.083]
+
+  # `place_above` = same shape as pick_above but base yawed ~+60° (joint1).
+  # ⚠ TUNE THIS to put the gripper above your destination slot.
+  place_above:
+    joint: [+0.4, -0.413, 1.758, -2.014, -0.816, 2.083]
+
+  place:
+    joint: [+0.4, -0.213, 1.758, -2.014, -0.816, 2.083]

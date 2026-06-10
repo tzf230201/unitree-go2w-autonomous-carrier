@@ -1,0 +1,4 @@
+# No 3D depth sensor wired into the planning scene yet.
+# When you add a RealSense / depth camera, list them here as point cloud or
+# depth-image plugins so the octomap updater can populate collision objects.
+sensors: []
