@@ -30,6 +30,7 @@ from __future__ import annotations
 import html
 import json
 import os
+import re
 import shutil
 import signal
 import socket
@@ -37,6 +38,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import List, Optional, Tuple
@@ -480,6 +482,14 @@ def list_ollama_models() -> List[str]:
         return []
 
 
+def model_param_billions(name: str) -> float:
+    """Parse the parameter count in billions from a model name ('qwen2.5:7b'→7.0,
+    'llama3.2:3b'→3.0). Used to order/choose models smallest-first (smaller = more
+    likely to fit the Orin GPU). Unknown → large, so it sorts last."""
+    m = re.search(r"(\d+(?:\.\d+)?)\s*b\b", name.lower())
+    return float(m.group(1)) if m else 999.0
+
+
 def list_running_ollama() -> List[str]:
     """Models Ollama currently holds in memory (like `ollama ps`). These are the
     ones consuming GPU/RAM and worth killing."""
@@ -747,14 +757,11 @@ def execute_action(node: "MonitorNode", act: dict) -> Tuple[Optional[str], Optio
     return reply or f"OK ({action}).", None
 
 
-def route_agent(node: "MonitorNode", ollama_model: str, message: str
-                ) -> Tuple[Optional[str], Optional[str]]:
-    """Chat message → local LLM (with the robot skill) → JSON action → execute."""
-    if node.pub_sport is None:
-        return None, ("Motion control unavailable (unitree_api package is not "
-                      "imported in this node).")
+def _agent_generate(model: str, message: str
+                    ) -> Tuple[Optional[str], Optional[str]]:
+    """One skill-driven generate call. Returns (raw_reply, error)."""
     payload = json.dumps({
-        "model": ollama_model, "prompt": message,
+        "model": model, "prompt": message,
         "system": load_skill(), "stream": False,
         "options": {"num_ctx": 2048, "num_predict": 200, "temperature": 0.1},
     }).encode("utf-8")
@@ -765,14 +772,49 @@ def route_agent(node: "MonitorNode", ollama_model: str, message: str
     try:
         with urllib.request.urlopen(req, timeout=180) as r:
             data = json.loads(r.read().decode("utf-8"))
-        raw = (data.get("response", "") or "").strip()
+        return (data.get("response", "") or "").strip(), None
+    except urllib.error.HTTPError as exc:
+        # 500 here is almost always the model failing to load — on this Orin that
+        # means the CUDA/GPU allocation OOM'd (big models like 7B don't fit).
+        hint = " (likely out of GPU memory — pick a smaller model)" if exc.code == 500 else ""
+        return None, f"{model}: HTTP {exc.code}{hint}"
     except Exception as exc:
-        return None, f"ollama error: {exc}"
+        return None, f"{model}: {exc}"
+
+
+def pick_fallback_model(exclude: str) -> Optional[str]:
+    """Smallest installed Ollama model that isn't the one that just failed —
+    used to auto-recover when the chosen model OOMs. Size parsed from the name."""
+    models = [m for m in list_ollama_models() if m != exclude]
+    return sorted(models, key=model_param_billions)[0] if models else None
+
+
+def route_agent(node: "MonitorNode", ollama_model: str, message: str
+                ) -> Tuple[Optional[str], Optional[str]]:
+    """Chat message → local LLM (with the robot skill) → JSON action → execute.
+    If the chosen model errors (typically a 7B OOMing the Orin GPU), fall back to
+    the smallest other installed model and tell the user."""
+    if node.pub_sport is None:
+        return None, ("Motion control unavailable (unitree_api package is not "
+                      "imported in this node).")
+    raw, err = _agent_generate(ollama_model, message)
+    note = ""
+    if err:
+        fb = pick_fallback_model(exclude=ollama_model)
+        if not fb:
+            return None, f"{err}. No fallback model installed."
+        raw, err2 = _agent_generate(fb, message)
+        if err2:
+            return None, f"{err}; fallback {err2}."
+        note = f"[{ollama_model} unavailable → used {fb}] "
     act = extract_action(raw)
     if act is None:
         return None, (f"LLM did not return a valid JSON action. "
                       f"Raw reply: {raw[:200]}")
-    return execute_action(node, act)
+    reply, aerr = execute_action(node, act)
+    if aerr:
+        return None, aerr
+    return (note + (reply or "")), None
 
 
 CSS = """
@@ -1045,7 +1087,9 @@ def render_page(node: MonitorNode, cam: CameraManager) -> str:
     """
 
     # --- AI chat card (model selector = local Ollama models + codex + claude) ---
-    ollama_models = list_ollama_models()
+    # Smallest models first so the default selection is the one most likely to
+    # fit the Orin GPU (7B models OOM here; 3B fits).
+    ollama_models = sorted(list_ollama_models(), key=model_param_billions)
     # Robot Agent options first (they DRIVE the robot); one per local model.
     agent_opts = "".join(
         f'<option value="agent:{html.escape(m)}">🦿 Robot Agent · {html.escape(m)}</option>'

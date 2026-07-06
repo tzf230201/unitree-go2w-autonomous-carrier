@@ -264,12 +264,57 @@ ros2 launch om_chain_pick_place pick_place.launch.py \
 
 ---
 
+## AprilTag pick (level-1 vision PoC)
+
+Two extra nodes make the *pick* side vision-driven while the place side
+stays waypoint-based:
+
+* `apriltag_detector` — RealSense D435i via pyrealsense2 (no ROS camera
+  driver), AprilTag 36h11 via OpenCV aruco, depth-refined pose →
+  `/apriltag/pose` (camera optical frame) + `/apriltag/debug_image`.
+* `tag_pick_place_node` — transforms the tag into `world` through a static
+  hand-measured camera extrinsic (`camera_xyz`/`camera_rpy` = camera *body*
+  frame, x out of the lens, y left, z up), generates Cartesian pick poses
+  (`approach_offset`/`grasp_offset` above the tag, `grasp_pitch` orientation,
+  radial yaw), then runs the same 11-step sequence.
+
+Config: [`config/tag_pick.yaml`](config/tag_pick.yaml). Target object is a
+30 mm cube with the tag on its top face. A printable tag (36h11, id 0,
+30 mm) lives at `~/ros2_ws/apriltag36h11_id0_30mm.png` — print at 100 %
+scale and check the black square is exactly 30 mm. `grasp_offset` is
+negative (−15 mm): the tag is on top of the cube, the grasp target is the
+cube's middle.
+
+```bash
+# camera is normally held by the web dashboard — release it first
+sudo systemctl stop go2w-web-monitor.service
+sudo systemctl stop go2w-arm-launcher.service     # release /dev/ttyUSB0
+
+# Terminal 1 — MoveIt stack
+ros2 launch om_chain_moveit_config demo.launch.py
+
+# Terminal 2 — detector + tag picker
+ros2 launch om_chain_pick_place tag_pick_place.launch.py
+
+# 1. verify the extrinsic: put the tag at a spot you can measure
+ros2 service call /tag_world std_srvs/srv/Trigger
+# 2. tune camera_xyz/camera_rpy in tag_pick.yaml until /tag_world matches
+#    the ruler, then run:
+ros2 service call /run_tag_pick std_srvs/srv/Trigger
+```
+
+If a Cartesian step fails with error code `99999`, the tag is probably
+outside the dexterous workspace for a straight-down grasp — try a tilted
+approach (`grasp_pitch: 2.4` ≈ 45°) or move the tag closer to the arm.
+
+---
+
 ## Possible follow-ups (not done yet)
 
 - Add **collision objects** to the planning scene (table surface, walls)
   so the planner avoids them
-- Plug in **vision** (RealSense + object detection) → publish dynamic pose →
-  pick where the object actually is, no hard-coded waypoints
+- **Hand-eye calibration** instead of ruler-measured `camera_xyz`/`camera_rpy`
+  (e.g. tag held in the gripper at known EE poses)
 - Use **MoveIt Servo** for a Cartesian jog mode alongside the state machine
 - Wrap the sequence in a **behavior tree** (`py_trees`, `behaviortree_cpp`)
   for retry / fallback / multi-object workflows

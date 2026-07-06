@@ -1,0 +1,56 @@
+# AprilTag pick-and-place (level-1 PoC) — parameters for both nodes.
+#
+# ⚠ camera_xyz / camera_rpy MUST be measured for your actual camera mount:
+#   pose of the camera BODY frame (x out of the lens, y left, z up) relative
+#   to the arm base (`world`, the bottom of link1). Verify with:
+#       ros2 service call /tag_world std_srvs/srv/Trigger
+#   → put the tag at a known spot, compare the reported x/y/z with a ruler.
+
+apriltag_detector:
+  ros__parameters:
+    width: 1280             # camera is on USB2: 1280x720 color max 15 fps
+    height: 720
+    fps: 15
+    depth_width: 640        # USB2 can't stream 1280x720 depth
+    depth_height: 480
+    tag_family: "36h11"
+    tag_size: 0.03          # metres, outer black edge — 30 mm tag on the
+                            # 30 mm cube. Must match the printout exactly!
+    tag_id: -1              # -1 = nearest tag of any ID
+    corner_refine: "subpix" # ~25 ms/frame → full 15 fps on the Orin.
+                            # "apriltag" is more robust for tiny/blurry tags
+                            # but ~195 ms/frame → only ~5 fps. If the pose
+                            # gets jittery, switch back to "apriltag".
+    use_depth: true
+    publish_debug: true
+    exposure: 80            # fixed manual exposure; 0 = auto. Auto blows out
+                            # the glossy tag print under ceiling lights here —
+                            # 40–150 all detected reliably (tested 2026-07-06).
+
+tag_pick_place:
+  ros__parameters:
+    # --- camera extrinsic (MEASURE THIS) ---
+    camera_xyz: [0.25, 0.0, 0.30]     # m, camera position in world
+    camera_rpy: [0.0, 0.6, 3.1416]    # rad; example: pitched down ~34°,
+                                      # yawed 180° (looking back at the arm)
+
+    # --- grasp generation ---
+    approach_offset: 0.10   # hover height above the tag (m)
+    grasp_offset: -0.015    # EE height relative to the tag at grasp (m).
+                            # Tag sits ON TOP of the 30 mm cube, so aim the
+                            # EE at the cube's middle: 15 mm below the tag.
+                            # TUNE on hardware (depends on where
+                            # end_effector_link sits vs the fingertips).
+    grasp_pitch: 3.1416     # pi = gripper straight down
+    yaw_offset: 0.0         # added to the radial yaw
+    min_z: 0.015            # never command the EE below this (m)
+    min_samples: 5
+    max_sample_age: 1.5
+
+    # --- motion / gripper ---
+    vel_scale: 0.2
+    acc_scale: 0.2
+    planning_time: 10.0
+    planning_attempts: 20
+    gripper_open_pos: 0.019
+    gripper_close_pos: -0.010

@@ -23,6 +23,9 @@ setup(
     entry_points={
         'console_scripts': [
             'pick_place_node = om_chain_pick_place.pick_place_node:main',
+            'apriltag_detector = om_chain_pick_place.apriltag_detector:main',
+            'tag_pick_place_node = om_chain_pick_place.tag_pick_place_node:main',
+            'tag_calibrate = om_chain_pick_place.tag_calibrate:main',
         ],
     },
 )
