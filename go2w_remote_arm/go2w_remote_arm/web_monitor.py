@@ -34,6 +34,7 @@ import shutil
 import signal
 import socket
 import subprocess
+import sys
 import threading
 import time
 import urllib.request
@@ -60,12 +61,24 @@ BTN_F3 = 1 << 7
 TELEOP_NODE_NAME = "go2w_remote_arm"
 ARM_BUS_DEVICE = "/dev/ttyUSB0"
 
-# Unitree sport-mode API ids (same constants as go2w_cmd_vel_control_node.cpp).
+# Unitree sport-mode API ids (verified against the official Unitree ROS2
+# ros2_sport_client.h / .cpp and go2w_cmd_vel_control_node.cpp).
 SPORT_TOPIC = "/api/sport/request"
+API_DAMP = 1001            # emergency stop — all joints damp (highest priority)
 API_BALANCE_STAND = 1002
 API_STOP_MOVE = 1003
 API_STAND_UP = 1004
+API_STAND_DOWN = 1005      # lie down
+API_RECOVERY_STAND = 1006  # recover from a fall / lying to balanced stand
 API_MOVE = 1008
+API_SWITCH_GAIT = 1011     # {"data":d}  0/1/2
+API_SPEED_LEVEL = 1015     # {"data":level}  -1/0/1
+
+# Locomotion mode -> SwitchGait "data" code (Go2W: 0 default, 1 stair/terrain
+# walking, 2 height-climbing — per the official Go2W high-level control doc).
+GAIT_CODES = {"normal": 0, "terrain": 1, "climb": 2}
+# Speed gear -> SpeedLevel "data" value. Only effective in the default gait (0).
+SPEED_LEVELS = {"slow": -1, "normal": 0, "fast": 1}
 
 # Conservative motion caps for chat-driven commands. Must match the ranges
 # documented in skills/go2w_control_skill.md.
@@ -110,6 +123,21 @@ def find_node_pids(name: str) -> List[int]:
         elif name in args:
             token.append(pid)
     return exact or exe or token
+
+
+def restart_self(delay: float = 0.6) -> None:
+    """Restart this web_monitor process so code edits take effect — no terminal,
+    no sudo. Re-execs the same Python program (os.execv keeps the PID); the fresh
+    interpreter re-imports the package from the symlinked source. If the new code
+    fails to boot, the process exits and systemd's Restart=on-failure recovers it.
+    Delayed in a background thread so the HTTP response is flushed first."""
+    def _do() -> None:
+        time.sleep(delay)
+        try:
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        except Exception:
+            os._exit(1)  # hand off to systemd Restart=on-failure
+    threading.Thread(target=_do, daemon=True).start()
 
 
 def kill_node(name: str) -> str:
@@ -234,6 +262,56 @@ class MonitorNode(Node):
         self._motion_gen += 1
         self._sport(API_STAND_UP)
         self._sport(API_BALANCE_STAND)
+
+    def sport_gait(self, code: int) -> None:
+        """Switch locomotion mode (api_id 1011). Sent a few times because the sport
+        controller can drop a single SwitchGait (same repeat trick as the demo and
+        go2w_cmd_vel_control)."""
+        param = '{"data":%d}' % int(code)
+        for _ in range(3):
+            self._sport(API_SWITCH_GAIT, param)
+            time.sleep(0.1)
+
+    def sport_speed(self, level: int) -> None:
+        """Set speed gear via SpeedLevel (api_id 1015, -1/0/1). Per the Unitree
+        doc this only takes effect in the default gait, so for any non-normal gear
+        we drop back to gait 0 first."""
+        level = max(-1, min(1, int(level)))
+        if level != 0:
+            self._sport(API_SWITCH_GAIT, '{"data":0}')
+            time.sleep(0.1)
+        for _ in range(3):
+            self._sport(API_SPEED_LEVEL, '{"data":%d}' % level)
+            time.sleep(0.1)
+
+    def sport_damp(self) -> None:
+        self._motion_gen += 1
+        self._sport(API_DAMP)
+
+    def sport_lie_down(self) -> None:
+        """Lie down. StandDown only responds when the robot is in the standing-lock
+        (StandUp) or damping state — from balance-stand or a gait it is ignored. So
+        stop, enter StandUp lock, wait for it to settle, then StandDown. Runs in a
+        thread because of the settle delay."""
+        with self._motion_lock:
+            self._motion_gen += 1
+            gen = self._motion_gen
+
+        def _run() -> None:
+            self._sport(API_STOP_MOVE)
+            time.sleep(0.2)
+            self._sport(API_STAND_UP)          # required precondition (joint lock)
+            for _ in range(5):                 # wait ~0.5 s for stand-up to settle
+                if gen != self._motion_gen:    # superseded by a newer command
+                    return
+                time.sleep(0.1)
+            self._sport(API_STAND_DOWN)
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def sport_recover(self) -> None:
+        self._motion_gen += 1
+        self._sport(API_RECOVERY_STAND)
 
     def sport_move(self, vx: float, vy: float, wz: float, duration: float) -> None:
         """Stream Move at 20 Hz for `duration` s (clamped), then StopMove. Runs in
@@ -402,6 +480,75 @@ def list_ollama_models() -> List[str]:
         return []
 
 
+def list_running_ollama() -> List[str]:
+    """Models Ollama currently holds in memory (like `ollama ps`). These are the
+    ones consuming GPU/RAM and worth killing."""
+    try:
+        with urllib.request.urlopen(OLLAMA_URL + "/api/ps", timeout=3) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        return [m["name"] for m in data.get("models", [])]
+    except Exception:
+        return []
+
+
+def stop_ollama(model: str) -> Tuple[bool, str]:
+    """Unload a loaded model from memory (frees GPU/RAM) via keep_alive=0 — the
+    documented Ollama way to stop a running model."""
+    payload = json.dumps({"model": model, "keep_alive": 0}).encode("utf-8")
+    req = urllib.request.Request(
+        OLLAMA_URL + "/api/generate", data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            r.read()
+        return True, model
+    except Exception as exc:
+        return False, f"{model}: {exc}"
+
+
+def preload_ollama(model: str) -> Tuple[bool, str]:
+    """Load a model into memory without generating anything (Ollama loads on an
+    empty prompt), so the first real chat is fast. keep_alive keeps it resident."""
+    payload = json.dumps({"model": model, "keep_alive": "30m"}).encode("utf-8")
+    req = urllib.request.Request(
+        OLLAMA_URL + "/api/generate", data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=180) as r:
+            r.read()
+        return True, model
+    except Exception as exc:
+        return False, f"{model}: {exc}"
+
+
+def raw_ollama_model(value: str) -> Optional[str]:
+    """Turn a dropdown value ('agent:qwen2.5:7b' / 'ollama:llama3.2:3b') into the
+    bare Ollama model name. Returns None for non-Ollama backends (codex/claude)."""
+    if ":" not in value:
+        return None
+    prefix, rest = value.split(":", 1)
+    return rest if prefix in ("agent", "ollama") else None
+
+
+def stop_running_ollama() -> str:
+    """Unload every currently-loaded model. Returns a human-readable result."""
+    running = list_running_ollama()
+    if not running:
+        return "No LLM is loaded — nothing to kill."
+    ok, failed = [], []
+    for m in running:
+        good, info = stop_ollama(m)
+        (ok if good else failed).append(info)
+    parts = []
+    if ok:
+        parts.append(f"Killed: {', '.join(ok)}")
+    if failed:
+        parts.append(f"failed: {', '.join(failed)}")
+    return " · ".join(parts)
+
+
 def chat_ollama(model: str, message: str) -> Tuple[Optional[str], Optional[str]]:
     payload = json.dumps({
         "model": model, "prompt": message,
@@ -532,6 +679,28 @@ def execute_action(node: "MonitorNode", act: dict) -> Tuple[Optional[str], Optio
             node.sport_stop()
         elif action == "stand":
             node.sport_stand()
+        elif action == "gait":
+            mode = str(act.get("mode", "")).lower()
+            code = act.get("code", GAIT_CODES.get(mode))
+            if code is None:
+                return None, (f"unknown gait mode '{mode}'. "
+                              f"Use one of: {', '.join(GAIT_CODES)}.")
+            node.sport_gait(int(code))
+            return reply or f"Switched to {mode or code} mode.", None
+        elif action == "speed":
+            level_name = str(act.get("level", "")).lower()
+            level = act.get("value", SPEED_LEVELS.get(level_name))
+            if level is None:
+                return None, (f"unknown speed '{level_name}'. "
+                              f"Use one of: {', '.join(SPEED_LEVELS)}.")
+            node.sport_speed(int(level))
+            return reply or f"Speed set to {level_name or level}.", None
+        elif action == "damp":
+            node.sport_damp()
+        elif action == "lie_down":
+            node.sport_lie_down()
+        elif action == "recover":
+            node.sport_recover()
         elif action == "teleop":
             running = node.teleop_running()
             want = bool(act.get("enable", True))
@@ -539,7 +708,7 @@ def execute_action(node: "MonitorNode", act: dict) -> Tuple[Optional[str], Optio
                 node.tap_f3()
             else:
                 reply = reply or (
-                    "Teleop sudah aktif." if running else "Teleop memang mati."
+                    "Teleop is already running." if running else "Teleop is already off."
                 )
         elif action == "list_topics":
             topics = node.topics()
@@ -554,27 +723,27 @@ def execute_action(node: "MonitorNode", act: dict) -> Tuple[Optional[str], Optio
             return f"{len(names)} ROS nodes:\n{lines}", None
         elif action == "battery":
             if node.battery_soc is None:
-                return "Data baterai belum tersedia (butuh /lowstate).", None
+                return "Battery data not available yet (needs /lowstate).", None
             extra = []
             if node.battery_v is not None:
                 extra.append(f"{node.battery_v:.1f} V")
             if node.battery_a is not None:
                 extra.append(f"{node.battery_a:+.1f} A")
             tail = f" ({', '.join(extra)})" if extra else ""
-            return f"Baterai {node.battery_soc}%{tail}.", None
+            return f"Battery {node.battery_soc}%{tail}.", None
         elif action == "status":
             info = sys_info()
             soc = f"{node.battery_soc}%" if node.battery_soc is not None else "?"
-            teleop = "aktif" if node.teleop_running() else "mati"
+            teleop = "on" if node.teleop_running() else "off"
             grip = node.gripper_state or "?"
-            return (f"Status: baterai {soc}, suhu CPU {info['temp']}, "
+            return (f"Status: battery {soc}, CPU temp {info['temp']}, "
                     f"RAM {info['ram']}, teleop {teleop}, gripper {grip}."), None
         elif action == "say":
             pass
         else:
-            return None, f"aksi tidak dikenal: '{action}'"
+            return None, f"unknown action: '{action}'"
     except Exception as exc:
-        return None, f"gagal menjalankan '{action}': {exc}"
+        return None, f"failed to run '{action}': {exc}"
     return reply or f"OK ({action}).", None
 
 
@@ -582,8 +751,8 @@ def route_agent(node: "MonitorNode", ollama_model: str, message: str
                 ) -> Tuple[Optional[str], Optional[str]]:
     """Chat message → local LLM (with the robot skill) → JSON action → execute."""
     if node.pub_sport is None:
-        return None, ("Kontrol gerak tidak tersedia (paket unitree_api tidak "
-                      "ter-import di node ini).")
+        return None, ("Motion control unavailable (unitree_api package is not "
+                      "imported in this node).")
     payload = json.dumps({
         "model": ollama_model, "prompt": message,
         "system": load_skill(), "stream": False,
@@ -601,8 +770,8 @@ def route_agent(node: "MonitorNode", ollama_model: str, message: str
         return None, f"ollama error: {exc}"
     act = extract_action(raw)
     if act is None:
-        return None, (f"LLM tidak mengeluarkan aksi JSON yang valid. "
-                      f"Jawaban mentah: {raw[:200]}")
+        return None, (f"LLM did not return a valid JSON action. "
+                      f"Raw reply: {raw[:200]}")
     return execute_action(node, act)
 
 
@@ -698,10 +867,36 @@ async function sendChat(){
   }catch(e){ t.style.opacity='1'; t.textContent='⚠ '+e; }
   _log().scrollTop=_log().scrollHeight;
 }
+// Preload (warm up) the selected Ollama model so the first chat is fast. Fired
+// when the user first focuses the input or switches model. Keyed per model so we
+// only load each once.
+const _preloaded={};
+async function preloadModel(){
+  const sel=document.getElementById('chatmodel'); if(!sel) return;
+  const model=sel.value;
+  if(!model || _preloaded[model]) return;
+  if(!(model.startsWith('agent:')||model.startsWith('ollama:'))) return; // skip codex/claude
+  _preloaded[model]=true;
+  const s=document.getElementById('chatstatus');
+  if(s) s.textContent='⏳ loading model into memory…';
+  try{
+    const r=await fetch('/preload_llm',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({model:model})});
+    const d=await r.json();
+    if(s) s.textContent = d.ok ? '✓ model ready' : ('⚠ '+(d.model||'load failed'));
+    if(!d.ok) _preloaded[model]=false;  // allow a retry
+  }catch(e){ _preloaded[model]=false; if(s) s.textContent=''; }
+  if(s) setTimeout(()=>{ if(s.textContent==='✓ model ready') s.textContent=''; },2500);
+}
 document.addEventListener('DOMContentLoaded',function(){
   const b=document.getElementById('chatsend'); if(b) b.addEventListener('click',sendChat);
   const i=document.getElementById('chatinput');
-  if(i) i.addEventListener('keydown',function(e){ if(e.key==='Enter') sendChat(); });
+  if(i){
+    i.addEventListener('keydown',function(e){ if(e.key==='Enter') sendChat(); });
+    i.addEventListener('focus',preloadModel,{once:true});  // warm up on first chat
+  }
+  const m=document.getElementById('chatmodel');
+  if(m) m.addEventListener('change',preloadModel);         // and when model switches
 });
 </script>
 """
@@ -746,6 +941,13 @@ def status_fields(node) -> dict:
         counts[key] = counts.get(key, 0) + 1
     dups = sum(1 for c in counts.values() if c > 1)
     teleop_on = counts.get(TELEOP_NODE_NAME, 0) > 0
+    running_llm = list_running_ollama()
+    if running_llm:
+        llm_cell = (f'<span class="pill warn">{html.escape(", ".join(running_llm))}</span>'
+                    ' <form class="inline" method="POST" action="/stop_llm">'
+                    '<button class="kill" type="submit">kill</button></form>')
+    else:
+        llm_cell = '<span class="pill ok">none loaded</span>'
     return {
         "uptime": html.escape(info["uptime"]),
         "load": f'<span class="mono">{html.escape(info["load"])}</span>',
@@ -755,6 +957,7 @@ def status_fields(node) -> dict:
         "arm_bus": pill(info["arm_bus"], "present", "MISSING"),
         "teleop": pill(teleop_on, "RUNNING", "stopped"),
         "gripper": gripper_pill(node.gripper_state),
+        "llm": llm_cell,
         "dups": (f'<span class="pill bad">{dups} FOUND</span>' if dups
                  else '<span class="pill ok">none</span>'),
     }
@@ -787,6 +990,7 @@ def render_page(node: MonitorNode, cam: CameraManager) -> str:
         (f"Arm bus {ARM_BUS_DEVICE}", fields["arm_bus"], "arm_bus"),
         ("Teleop", fields["teleop"], "teleop"),
         ("Gripper", fields["gripper"], "gripper"),
+        ("LLM loaded", fields["llm"], "llm"),
         ("Duplicate nodes", fields["dups"], "dups"),
     ]
     status_rows = "".join(
@@ -858,20 +1062,26 @@ def render_page(node: MonitorNode, cam: CameraManager) -> str:
              '<option value="claude">Claude Code CLI</option>')
     chat_html = f"""
     <div class="card chatcard">
-      <h2>🦿 Robot Agent — perintah lewat chat</h2>
+      <h2>🦿 Robot Agent — command via chat</h2>
       <div class="chatlog" id="chatlog">
-        <div class="msg ai hint">Ketik perintah, mis. <b>maju 1 meter</b>,
-        <b>belok kiri</b>, <b>berhenti</b>, <b>berapa persen baterai</b>,
-        <b>listkan ros topic</b>.</div>
+        <div class="msg ai hint">Type a command, e.g. <b>move forward 1 meter</b>,
+        <b>turn left</b>, <b>stop</b>, <b>battery level</b>,
+        <b>list ros topics</b>.</div>
       </div>
       <div class="chatrow">
-        <select id="chatmodel" title="Pilih backend AI">{opts}</select>
-        <input id="chatinput" type="text" placeholder="Perintah robot… mis. 'maju 1 meter'" autocomplete="off">
-        <button id="chatsend" type="button">Kirim</button>
+        <select id="chatmodel" title="Choose the AI backend">{opts}</select>
+        <input id="chatinput" type="text" placeholder="Robot command… e.g. 'move forward 1 meter'" autocomplete="off">
+        <button id="chatsend" type="button">Send</button>
+        <form class="inline" method="POST" action="/stop_llm"
+              title="Unload the LLM currently held in GPU/RAM">
+          <button class="stop" type="submit">⛔ Kill LLM</button>
+        </form>
       </div>
-      <p class="small">🦿 <b>Robot Agent</b> = LLM lokal mengubah pesan jadi aksi nyata
-      (gerak, teleop, tanya baterai/topic/node). <b>Chat</b> = tanya-jawab biasa.
-      Skill: skills/go2w_control_skill.md.</p>
+      <p class="small" id="chatstatus"></p>
+      <p class="small">🦿 <b>Robot Agent</b> = the local LLM turns your message into a
+      real action (move, teleop, ask battery/topics/nodes). <b>Chat</b> = plain Q&amp;A.
+      <b>Kill LLM</b> frees GPU/RAM by unloading whichever model is loaded (see the
+      "LLM loaded" row below). Skill: skills/go2w_control_skill.md.</p>
     </div>
     """
 
@@ -887,10 +1097,16 @@ def render_page(node: MonitorNode, cam: CameraManager) -> str:
 <title>Go2W Monitor — {html.escape(info['hostname'])}</title>
 <style>{CSS}</style></head><body>
 <header><h1>🤖 Go2W Robot Monitor</h1>
-<a class="btn ghost" href="/">↻ Refresh</a></header>
+<div style="display:flex;gap:8px">
+<a class="btn ghost" href="/">↻ Refresh</a>
+<form class="inline" method="POST" action="/restart"
+      onsubmit="return confirm('Restart the web monitor service? The page will reconnect in a few seconds.')">
+  <button class="stop" type="submit">♻ Restart service</button>
+</form>
+</div></header>
 <main>
-<p class="small">Status baterai/suhu diperbarui otomatis tiap 3 detik.
-Daftar node &amp; topic sekarang lewat chat. Snapshot {now}.</p>
+<p class="small">Battery/temperature status refreshes automatically every 3 s.
+Node &amp; topic lists are now available via chat. Snapshot {now}.</p>
 {flash_html}
 {dup_banner}
 {chat_html}
@@ -1010,6 +1226,54 @@ def make_handler(node: MonitorNode, cam: CameraManager):
                     except Exception as exc:
                         node.flash = f"kill '{name}' failed: {exc}"
                     node.get_logger().info(node.flash)
+                return self._redirect_home()
+            if self.path == "/restart":
+                node.get_logger().info("Restart requested from web — re-execing.")
+                body = (
+                    "<!doctype html><meta charset='utf-8'>"
+                    "<meta http-equiv='refresh' content='6; url=/'>"
+                    "<title>Restarting…</title>"
+                    "<body style='font-family:system-ui;background:#12141a;color:#e6e6e6;"
+                    "padding:40px;text-align:center'>"
+                    "<h2>♻ Restarting the web monitor…</h2>"
+                    "<p>Reloading the latest code. This page reconnects automatically "
+                    "in a few seconds.</p>"
+                    "<p><a style='color:#7ea1ff' href='/'>Click here</a> if it doesn't.</p>"
+                    "</body>"
+                )
+                self._send_html(body)
+                try:
+                    self.wfile.flush()
+                except Exception:
+                    pass
+                restart_self()
+                return
+            if self.path == "/preload_llm":
+                try:
+                    length = int(self.headers.get("Content-Length", 0) or 0)
+                    body = self.rfile.read(length).decode("utf-8") if length else "{}"
+                    value = str(json.loads(body).get("model", "")).strip()
+                except Exception as exc:
+                    return self._send_json({"error": f"bad request: {exc}"}, 400)
+                model = raw_ollama_model(value)
+                if not model:
+                    return self._send_json({"ok": False, "skipped": True})
+                ok, info = preload_ollama(model)
+                return self._send_json({"ok": ok, "model": info})
+            if self.path == "/stop_llm":
+                # An optional `model` form field kills just that one; otherwise
+                # unload every currently-loaded model.
+                model = self._read_form().get("model", "").strip()
+                try:
+                    if model:
+                        ok, info = stop_ollama(model)
+                        node.flash = (f"Killed LLM {info}." if ok
+                                      else f"Failed to kill LLM {info}.")
+                    else:
+                        node.flash = stop_running_ollama()
+                except Exception as exc:
+                    node.flash = f"stop LLM failed: {exc}"
+                node.get_logger().info(node.flash)
                 return self._redirect_home()
             self.send_error(404)
 

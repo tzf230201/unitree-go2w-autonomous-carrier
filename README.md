@@ -3,6 +3,11 @@
 slide: https://tzf230201.github.io/unitree-go2w-autonomous-carrier/
 
 
+
+
+web server : http://192.168.0.90:8080/
+
+
 <p align="center">
 	<img src="images/image_1.png" alt="Unitree" width="200" height="300" />
 </p>
