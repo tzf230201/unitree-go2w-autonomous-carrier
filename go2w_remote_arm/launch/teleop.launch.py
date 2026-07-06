@@ -80,7 +80,9 @@ def generate_launch_description():
             "gripper_btn_open": 1,    # L1
             "gripper_btn_close": 5,   # L2
             "gripper_open_target": -1.0,
-            "gripper_close_target": 0.0,
+            "gripper_close_target": 0.5,
+            "enable_joint_command_subscriber": True,
+            "joint_command_topic": "/go2w_remote_arm/joint_command",
         }],
         emulate_tty=True,
     )

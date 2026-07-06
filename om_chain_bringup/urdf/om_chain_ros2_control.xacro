@@ -27,7 +27,7 @@
 
       <xacro:if value="${use_fake_hardware}">
         <hardware>
-          <plugin>fake_components/GenericSystem</plugin>
+          <plugin>mock_components/GenericSystem</plugin>
           <param name="state_following_offset">0.0</param>
         </hardware>
       </xacro:if>
@@ -81,40 +81,56 @@
         </hardware>
       </xacro:unless>
 
-      <!-- ===== joints (7 total, identity-mapped) ===== -->
+      <!-- ===== joints (7 total, identity-mapped) =====
+           initial_value is ONLY used by fake_components (RViz sim) so the arm
+           starts at the non-singular `rest` pose instead of q=0 (straight up,
+           which is a wrist singularity where Servo emergency-stops). On real
+           hardware the dxl interface reads encoders and ignores these. -->
       <joint name="${prefix}joint1">
         <command_interface name="position"/>
-        <state_interface name="position"/>
+        <state_interface name="position">
+          <param name="initial_value">0.0</param>
+        </state_interface>
         <state_interface name="velocity"/>
         <state_interface name="effort"/>
       </joint>
       <joint name="${prefix}joint2">
         <command_interface name="position"/>
-        <state_interface name="position"/>
+        <state_interface name="position">
+          <param name="initial_value">-0.6806</param>
+        </state_interface>
         <state_interface name="velocity"/>
         <state_interface name="effort"/>
       </joint>
       <joint name="${prefix}joint3">
         <command_interface name="position"/>
-        <state_interface name="position"/>
+        <state_interface name="position">
+          <param name="initial_value">1.3613</param>
+        </state_interface>
         <state_interface name="velocity"/>
         <state_interface name="effort"/>
       </joint>
       <joint name="${prefix}joint4">
         <command_interface name="position"/>
-        <state_interface name="position"/>
+        <state_interface name="position">
+          <param name="initial_value">0.0</param>
+        </state_interface>
         <state_interface name="velocity"/>
         <state_interface name="effort"/>
       </joint>
       <joint name="${prefix}joint5">
         <command_interface name="position"/>
-        <state_interface name="position"/>
+        <state_interface name="position">
+          <param name="initial_value">0.8901</param>
+        </state_interface>
         <state_interface name="velocity"/>
         <state_interface name="effort"/>
       </joint>
       <joint name="${prefix}joint6">
         <command_interface name="position"/>
-        <state_interface name="position"/>
+        <state_interface name="position">
+          <param name="initial_value">0.0</param>
+        </state_interface>
         <state_interface name="velocity"/>
         <state_interface name="effort"/>
       </joint>

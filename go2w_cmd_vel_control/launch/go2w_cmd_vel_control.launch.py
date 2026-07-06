@@ -18,6 +18,11 @@ def generate_launch_description():
             {
                 "cmd_vel_topic": cmd_vel_topic,
                 "request_topic": request_topic,
+                "auto_balance_stand": True,
+                "auto_disable_joystick": False,
+                "startup_gait": 1,
+                "startup_repeats": 5,
+                "enforce_move_prereqs": True,
             }
         ],
     )

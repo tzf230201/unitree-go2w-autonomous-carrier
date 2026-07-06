@@ -38,10 +38,13 @@ from typing import List, Optional
 
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 
 from unitree_go.msg import WirelessController
+from std_msgs.msg import String
 from sensor_msgs.msg import JointState
+from geometry_msgs.msg import Point
+from visualization_msgs.msg import Marker, MarkerArray
 
 from dynamixel_sdk import (
     PortHandler,
@@ -57,18 +60,29 @@ ADDR_DRIVE_MODE = 10            # 1 byte (bit 2: 0=Velocity-based, 1=Time-based 
 ADDR_OPERATING_MODE = 11        # 1 byte
 ADDR_TORQUE_ENABLE = 64         # 1 byte
 ADDR_HARDWARE_ERROR = 70        # 1 byte
+ADDR_GOAL_CURRENT = 102         # 2 bytes, signed (current limit in mode 5)
 ADDR_PROFILE_ACCEL = 108        # 4 bytes (velocity-based: rev/min²·1/214.577; time-based: ms)
 ADDR_PROFILE_VELOCITY = 112     # 4 bytes (velocity-based: rev/min·1/0.229;   time-based: ms)
 ADDR_GOAL_POSITION = 116        # 4 bytes
+ADDR_PRESENT_CURRENT = 126      # 2 bytes, signed (grasp detection)
 ADDR_PRESENT_POSITION = 132     # 4 bytes
+
+# XM430-W350 current unit: 2.69 mA per raw tick.
+CURRENT_UNIT_MA = 2.69
 
 DRIVE_MODE_VELOCITY_BASED = 0x00
 DRIVE_MODE_TIME_BASED = 0x04
 LEN_GOAL = 4
 LEN_PRESENT = 4
 LEN_PROFILE = 4
+# One contiguous block: Present Current(126,2) + Velocity(128,4) + Position(132,4).
+# Sync-reading all 10 bytes gets each motor's position AND the gripper's current
+# in a single transaction.
+PRESENT_BLOCK_START = ADDR_PRESENT_CURRENT
+PRESENT_BLOCK_LEN = 10
 
 OP_MODE_POSITION = 3
+OP_MODE_CURRENT_POSITION = 5    # position control with a settable current limit
 PROTOCOL_VERSION = 2.0
 TICKS_PER_REV = 4096
 TICK_RAD = 2.0 * math.pi / TICKS_PER_REV
@@ -91,10 +105,45 @@ def _s32(b: int) -> int:
     return b - (1 << 32) if b >= (1 << 31) else b
 
 
+def _s16(b: int) -> int:
+    return b - (1 << 16) if b >= (1 << 15) else b
+
+
 # Button bit positions on the Go2W wireless_remote.
 # F3 (bit 7) is owned by the launcher node (starts/stops this teleop process).
 # F1 (bit 6) is intercepted here for the park-and-release routine.
+# Select (bit 3) toggles between JOINT mode (per-joint buttons) and IK mode
+# (button-driven EE twist solved via PyKDL).
 BTN_F1 = 1 << 6
+BTN_SELECT = 1 << 3
+BTN_R1 = 1 << 0
+BTN_R2 = 1 << 4
+BTN_X = 1 << 10
+BTN_B = 1 << 9
+BTN_Y = 1 << 11
+BTN_A = 1 << 8
+BTN_UP = 1 << 12
+BTN_DOWN = 1 << 14
+BTN_LEFT = 1 << 15
+BTN_RIGHT = 1 << 13
+
+MODE_JOINT = "JOINT"
+MODE_IK = "IK"
+
+
+def _rot_from_rotvec(rotvec) -> "object":
+    """Rodrigues' formula: 3-vector (axis·angle) → 3×3 rotation matrix.
+    Local helper so the module doesn't hard-depend on scipy."""
+    import numpy as np
+    v = np.asarray(rotvec, dtype=float)
+    theta = float(np.linalg.norm(v))
+    if theta < 1e-9:
+        return np.eye(3)
+    k = v / theta
+    K = np.array([[0.0, -k[2], k[1]],
+                  [k[2], 0.0, -k[0]],
+                  [-k[1], k[0], 0.0]])
+    return np.eye(3) + np.sin(theta) * K + (1.0 - np.cos(theta)) * (K @ K)
 
 
 class TeleopNode(Node):
@@ -102,6 +151,12 @@ class TeleopNode(Node):
         super().__init__("go2w_remote_arm")
 
         # ---- parameters ----
+        # sim_mode: no serial port / no Dynamixels. The node still subscribes
+        # to /wirelesscontroller and runs the exact same JOINT/IK logic, but
+        # instead of writing to motors it just publishes goal_rad on
+        # /joint_states so RViz (robot_state_publisher) visualizes the motion.
+        # Lets you verify the control feel against the URDF before touching HW.
+        self.declare_parameter("sim_mode", False)
         self.declare_parameter("device", "/dev/ttyUSB0")
         self.declare_parameter("baudrate", 1000000)
         self.declare_parameter(
@@ -144,6 +199,25 @@ class TeleopNode(Node):
         self.declare_parameter("gripper_min", -math.pi)
         self.declare_parameter("gripper_max", +math.pi)
 
+        # grasp-with-detection: when True the CLOSE button (L2) closes the jaw
+        # slowly toward gripper_close_target while watching Present Current, and
+        # stops/holds the instant the jaw presses on an object. When False L2
+        # snaps straight to the close target (original behaviour). Runs as a
+        # per-tick state machine so the remote stays responsive during a grasp.
+        self.declare_parameter("grasp_on_close", True)
+        # Gripper runs in Current-Based Position mode (op mode 5): it always
+        # pushes toward the commanded target but never exceeds this current, so
+        # holding an object indefinitely is safe (no overload) and letting go is
+        # detectable (jaws collapse to the close limit). State is published on
+        # gripper_state_topic and logged on every transition.
+        self.declare_parameter("gripper_current_limit_ma", 120.0)  # squeeze force cap (gentle)
+        self.declare_parameter("grasp_current_threshold", 70.0)    # |mA| ⇒ HOLDING (keep < limit)
+        self.declare_parameter("grasp_consecutive", 3)   # ticks over threshold to latch HOLDING
+        self.declare_parameter("grip_close_tol", 0.06)   # rad from close_target ⇒ fully CLOSED
+        self.declare_parameter("grip_open_tol", 0.12)    # rad from open_target ⇒ OPEN
+        self.declare_parameter("gripper_profile_velocity", 40)  # slow, gentle close
+        self.declare_parameter("gripper_state_topic", "/go2w_remote_arm/gripper_state")
+
         # gentle startup profile
         self.declare_parameter("startup_slow_vel", 30)
         self.declare_parameter("startup_slow_acc", 10)
@@ -159,10 +233,52 @@ class TeleopNode(Node):
         # vector is taken in order (joint1, joint2, ..., gripper).
         self.declare_parameter("center_position_rad", [0.0])
 
+        # After centering, optionally move into a folded "ready" pose so IK
+        # mode is usable immediately (q=0 vertical is a true singularity,
+        # IK is locked there). Default matches the `rest` group_state in
+        # om_chain_moveit_config (manipulability ≈ 6e-4, well away from 0).
+        self.declare_parameter("fold_after_center", True)
+        self.declare_parameter("fold_total_time_s", 3.0)
+        self.declare_parameter("fold_accel_time_s", 1.5)
+        # joint1..joint6 + gripper. Negative `gripper` keeps the gripper
+        # at its current position (no motion). Override per-rig via launch.
+        self.declare_parameter(
+            "fold_position_rad",
+            [0.0, -0.6806, 1.3613, 0.0, 0.8901, 0.0, float('nan')],
+        )
+
         # After the F1 park sequence, disable torque on every motor whose ID
         # is NOT in this list. Default keeps joint1 (ID 31) and joint4 (ID 24)
         # torque ON to match the boot-time torque state set by the launcher.
         self.declare_parameter("release_torque_except_ids", [31, 24])
+
+        # IK mode (toggled by Select). Velocities are applied each tick when a
+        # button is held; sign flips switch direction without re-mapping bits.
+        self.declare_parameter("ik_enabled", True)
+        self.declare_parameter("ik_base_link", "world")
+        self.declare_parameter("ik_tip_link", "end_effector_link")
+        self.declare_parameter("ik_urdf_pkg", "om_chain_bringup")
+        self.declare_parameter("ik_lin_speed", 0.05)   # m/s while button held
+        self.declare_parameter("ik_ang_speed", 0.5)    # rad/s while button held
+        # Damped least-squares lambda. Lower = more responsive, but more
+        # sensitive to singularities (e.g. arm fully vertical at q=0 right
+        # after boot centering). 0.05 hits a good balance for this arm.
+        self.declare_parameter("ik_damping", 0.05)
+        self.declare_parameter("ik_axis_signs",
+                                [1.0, 1.0, 1.0, 1.0, 1.0, 1.0])  # vx vy vz wx wy wz
+        # Self-collision: reject IK solutions where the capsule model of the
+        # links would intersect. The arm freezes at the boundary instead of
+        # folding through itself. radius = link "thickness" / 2 (m).
+        self.declare_parameter("ik_self_collision", True)
+        self.declare_parameter("ik_collision_radius", 0.025)
+
+        # Optional automatic pose commands, used by demo_june_2026. Commands
+        # update the same goal vector teleop writes each tick, so remote control
+        # still works normally after or during a demo.
+        self.declare_parameter("enable_joint_command_subscriber", True)
+        self.declare_parameter(
+            "joint_command_topic", "/go2w_remote_arm/joint_command"
+        )
 
         # ---- read parameters ----
         self.device = str(self.get_parameter("device").value)
@@ -200,10 +316,59 @@ class TeleopNode(Node):
         self.grip_close = float(self.get_parameter("gripper_close_target").value)
         self.grip_min = float(self.get_parameter("gripper_min").value)
         self.grip_max = float(self.get_parameter("gripper_max").value)
+        self.grasp_on_close = bool(self.get_parameter("grasp_on_close").value)
+        self.grip_current_limit = float(self.get_parameter("gripper_current_limit_ma").value)
+        self.grasp_threshold = float(self.get_parameter("grasp_current_threshold").value)
+        self.grasp_consecutive = int(self.get_parameter("grasp_consecutive").value)
+        self.grip_close_tol = float(self.get_parameter("grip_close_tol").value)
+        self.grip_open_tol = float(self.get_parameter("grip_open_tol").value)
+        self.grip_profile_vel = int(self.get_parameter("gripper_profile_velocity").value)
+        self.grip_state_topic = str(self.get_parameter("gripper_state_topic").value)
         self.keep_torque_ids = [
             int(x) for x in self.get_parameter("release_torque_except_ids").value
         ]
+        self.sim_mode = bool(self.get_parameter("sim_mode").value)
 
+        # gripper state machine (see _update_gripper / _tick). MUST be set BEFORE
+        # _init_hardware(), because _setup_gripper_current_mode() flips
+        # _grip_mode5 True during init — initializing it afterwards would clobber
+        # that back to False and silence the state publisher.
+        #   action : last user command — "open" / "close" / None
+        #   state  : OPEN / OPENING / CLOSING / HOLDING / CLOSED / DROPPED
+        # DROPPED is sticky (an object was held then lost) until the next open.
+        self._grip_action: Optional[str] = None
+        self._grip_state = "?"
+        self._grip_pos = 0.0
+        self._grip_cur = 0.0
+        self._grip_hold_count = 0   # debounce for latching HOLDING
+        self._grip_pub_count = 0    # heartbeat publish divider
+        self._grip_mode5 = False    # True once the gripper is in mode 5
+        self.pub_grip = None        # created in _setup_ros_io
+
+        if self.sim_mode:
+            self._init_sim()
+        else:
+            self._init_hardware()
+
+        # ---- snapshot: positions read BEFORE torque was enabled ----
+        # F1 (park-and-release) will use this as the return target.
+        self.initial_pose: List[float] = list(self._pretorque_pose)
+        self._parking = False
+
+        # state — goals are in joint-frame radians, indexed same as motor_ids
+        self.goal_rad: List[float] = list(self._present_pose)
+        self.lock = threading.Lock()
+        self.keys = 0
+        self.prev_keys = 0
+        self.axes = (0.0, 0.0, 0.0, 0.0)  # lx, ly, rx, ry
+        self.last_remote_t = 0.0
+
+        self._setup_ros_io()
+
+    # ------------------------------------------------------------------ #
+    #  hardware init (real Dynamixels)                                    #
+    # ------------------------------------------------------------------ #
+    def _init_hardware(self) -> None:
         # ---- bus init ----
         self.port = PortHandler(self.device)
         self.packet = PacketHandler(PROTOCOL_VERSION)
@@ -277,7 +442,7 @@ class TeleopNode(Node):
 
         # ---- now build sync read/write groups with the LIVE motor list ----
         self.sync_read = GroupSyncRead(
-            self.port, self.packet, ADDR_PRESENT_POSITION, LEN_PRESENT
+            self.port, self.packet, PRESENT_BLOCK_START, PRESENT_BLOCK_LEN
         )
         for mid in self.motor_ids:
             if not self.sync_read.addParam(mid):
@@ -309,14 +474,15 @@ class TeleopNode(Node):
             float(self.get_parameter("settle_seconds").value),
         )
 
-        # ---- snapshot: positions read BEFORE torque was enabled ----
-        # F1 (park-and-release) will use this as the return target.
-        self.initial_pose: List[float] = list(present)
-        self._parking = False
         self.get_logger().info(
             f"Initial pose snapshot (pre-torque): "
-            f"{[round(v, 3) for v in self.initial_pose]}"
+            f"{[round(v, 3) for v in present]}"
         )
+        # True resting pose, read while torque was OFF. F1 (park-and-release)
+        # returns HERE before dropping torque — NOT the folded ready pose,
+        # otherwise the arm would sag from the raised fold pose when torque is
+        # released. Captured before centering/fold overwrite `present`.
+        self._pretorque_pose = list(present)
 
         # ---- optional startup centering (Time-based Trapezoidal Profile) ----
         if bool(self.get_parameter("center_on_startup").value):
@@ -330,15 +496,69 @@ class TeleopNode(Node):
             self._center_all_servos(target, total_s, accel_s)
             present = target  # goal_rad will reflect the centered pose
 
-        # state — goals are in joint-frame radians, indexed same as motor_ids
-        self.goal_rad: List[float] = list(present)
-        self.lock = threading.Lock()
-        self.keys = 0
-        self.prev_keys = 0
-        self.axes = (0.0, 0.0, 0.0, 0.0)  # lx, ly, rx, ry
-        self.last_remote_t = 0.0
+        # ---- optional fold into a non-singular ready pose ----
+        # Runs only after centering so the arm starts from a known state. The
+        # fold target leaves IK well clear of the q=0 singularity so Select →
+        # IK works without the user having to reposition first.
+        if (bool(self.get_parameter("fold_after_center").value)
+                and bool(self.get_parameter("center_on_startup").value)):
+            import math as _math
+            fold_total_s = float(self.get_parameter("fold_total_time_s").value)
+            fold_accel_s = float(self.get_parameter("fold_accel_time_s").value)
+            raw = [float(x) for x in self.get_parameter("fold_position_rad").value]
+            # Pad / truncate to n_total. NaN entries → keep current value
+            # (useful for `gripper: nan` = don't disturb the gripper).
+            if len(raw) < self.n_total:
+                raw = raw + [float('nan')] * (self.n_total - len(raw))
+            fold_target = []
+            for i in range(self.n_total):
+                v = raw[i]
+                fold_target.append(present[i] if _math.isnan(v) else v)
+            self.get_logger().info(
+                f"Folding to {[round(x, 3) for x in fold_target]} over {fold_total_s}s"
+            )
+            self._center_all_servos(fold_target, fold_total_s, fold_accel_s)
+            present = fold_target
 
-        # ---- ROS io ----
+        self._present_pose = list(present)
+
+        # Put the gripper into Current-Based Position control so it can hold an
+        # object indefinitely without overloading and so a dropped object is
+        # detectable. Only when grasp_on_close is enabled and the gripper is
+        # live. Done last so centering/fold (which force position mode) are past.
+        if self.gripper_live and bool(self.get_parameter("grasp_on_close").value):
+            self._setup_gripper_current_mode(present[-1])
+
+    # ------------------------------------------------------------------ #
+    #  simulation init (no hardware — RViz visualization)                #
+    # ------------------------------------------------------------------ #
+    def _init_sim(self) -> None:
+        """No serial port, no Dynamixels. Start at the fold pose so IK is
+        immediately usable, and treat goal_rad as ground truth (published on
+        /joint_states for RViz). gentle/centering/fold are skipped because
+        there's nothing to move."""
+        self.port = None
+        self.packet = None
+        self.gripper_live = True
+        self._run_vel = int(self.get_parameter("run_vel").value)
+        self._run_acc = int(self.get_parameter("run_acc").value)
+
+        import math as _math
+        raw = [float(x) for x in self.get_parameter("fold_position_rad").value]
+        if len(raw) < self.n_total:
+            raw = raw + [0.0] * (self.n_total - len(raw))
+        present = [0.0 if _math.isnan(raw[i]) else raw[i] for i in range(self.n_total)]
+        self._present_pose = present
+        self._pretorque_pose = list(present)
+        self.get_logger().warn(
+            "SIM MODE: no hardware. Publishing /joint_states for RViz only. "
+            f"Start pose = {[round(v, 3) for v in present]}"
+        )
+
+    # ------------------------------------------------------------------ #
+    #  ROS subscriptions / publishers / IK solver                        #
+    # ------------------------------------------------------------------ #
+    def _setup_ros_io(self) -> None:
         qos_be = QoSProfile(
             depth=10,
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -348,12 +568,85 @@ class TeleopNode(Node):
             WirelessController, "/wirelesscontroller", self._on_remote, qos_be
         )
         self.pub_state = self.create_publisher(JointState, "/joint_states", 10)
+        # EoE marker — a small coordinate triad (x=red, y=green, z=blue) at
+        # the controlled end-effector point, so you can see both the IK target
+        # position AND its orientation in RViz.
+        self.pub_marker = self.create_publisher(
+            MarkerArray, "/go2w_remote_arm/ee_marker", 5
+        )
+        # Gripper state (OPEN/CLOSING/HOLDING/CLOSED/DROPPED). TRANSIENT_LOCAL so
+        # a monitor that subscribes later still receives the last known state.
+        grip_qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            history=HistoryPolicy.KEEP_LAST,
+        )
+        self.pub_grip = self.create_publisher(String, self.grip_state_topic, grip_qos)
+        if bool(self.get_parameter("enable_joint_command_subscriber").value):
+            self.create_subscription(
+                JointState,
+                str(self.get_parameter("joint_command_topic").value),
+                self._on_joint_command,
+                10,
+            )
+            self.get_logger().info(
+                f"Automatic joint commands enabled on "
+                f"{self.get_parameter('joint_command_topic').value}"
+            )
         self.dt = 1.0 / self.publish_rate
         self.create_timer(self.dt, self._tick)
 
+        # ---- IK solver (optional) ----
+        self.mode = MODE_JOINT
+        self.ik = None
+        self.ik_target_pos = None  # persistent Cartesian target (m), seeded on IK entry
+        self.ik_target_R = None    # persistent target orientation (3×3)
+        # max distance the target may lead the actual EoE before being pulled
+        # back — prevents the target running off into unreachable space.
+        self.ik_max_lead = 0.04
+        if bool(self.get_parameter("ik_enabled").value):
+            try:
+                from .ik_solver import IKSolver  # imported lazily
+                self.ik = IKSolver(
+                    base_link=str(self.get_parameter("ik_base_link").value),
+                    tip_link=str(self.get_parameter("ik_tip_link").value),
+                    urdf_pkg=str(self.get_parameter("ik_urdf_pkg").value),
+                    damping=float(self.get_parameter("ik_damping").value),
+                )
+                # Adopt the real URDF joint limits for the soft-clamp so the
+                # arm never folds past its mechanical range (the ±π default is
+                # far looser than the real Chain limits and caused the joints
+                # to "clash" / fold through themselves in IK mode).
+                for j in range(min(6, self.n_arm, len(self.ik.q_min))):
+                    self.joint_min[j] = float(self.ik.q_min[j])
+                    self.joint_max[j] = float(self.ik.q_max[j])
+                self.get_logger().info(
+                    f"IK solver ready (chain {self.ik.base_link} → "
+                    f"{self.ik.tip_link}, {self.ik.n_joints} joints). "
+                    f"Joint limits from URDF: "
+                    f"min={[round(v,2) for v in self.ik.q_min]} "
+                    f"max={[round(v,2) for v in self.ik.q_max]}. "
+                    f"Tap Select to toggle JOINT ↔ IK mode."
+                )
+            except Exception as exc:
+                self.get_logger().warn(
+                    f"IK init failed: {exc} — IK mode disabled"
+                )
+                self.ik = None
+        self.ik_lin = float(self.get_parameter("ik_lin_speed").value)
+        self.ik_ang = float(self.get_parameter("ik_ang_speed").value)
+        self.ik_signs = [float(x) for x in self.get_parameter("ik_axis_signs").value]
+        if len(self.ik_signs) < 6:
+            self.ik_signs = self.ik_signs + [1.0] * (6 - len(self.ik_signs))
+        self.ik_self_collision = bool(self.get_parameter("ik_self_collision").value)
+        self.ik_collision_radius = float(self.get_parameter("ik_collision_radius").value)
+        self._in_collision = False  # latched state for marker colouring
+
         self.get_logger().info(
-            f"go2w_remote_arm ready: {self.n_total} motors, "
-            f"vel={self.joint_velocity} rad/s, rate={self.publish_rate} Hz"
+            f"go2w_remote_arm ready: {self.n_total} joints, "
+            f"vel={self.joint_velocity} rad/s, rate={self.publish_rate} Hz, "
+            f"mode={self.mode}, sim={self.sim_mode}"
         )
 
     # ---------------- low-level helpers ----------------
@@ -387,6 +680,23 @@ class TeleopNode(Node):
             out.append(ticks_to_rad(_s32(raw)))
         return out
 
+    def _read_present_block(self):
+        """One sync-read transaction over the 126–135 block → (positions [rad]
+        for every motor, gripper |Present Current| [mA] or None). The gripper's
+        current comes free with everyone's position, so no extra single reads."""
+        rc = self.sync_read.txRxPacket()
+        if rc != COMM_SUCCESS:
+            raise IOError(f"sync read: {self.packet.getTxRxResult(rc)}")
+        positions: List[float] = []
+        for mid in self.motor_ids:
+            raw = self.sync_read.getData(mid, ADDR_PRESENT_POSITION, LEN_PRESENT)
+            positions.append(ticks_to_rad(_s32(raw)))
+        grip_cur = None
+        if self.gripper_live:
+            raw_c = self.sync_read.getData(self.motor_ids[-1], ADDR_PRESENT_CURRENT, 2)
+            grip_cur = abs(_s16(raw_c) * CURRENT_UNIT_MA)
+        return positions, grip_cur
+
     def _write_goals_rad(self, goals: List[float]) -> None:
         self.sync_write_goal.clearParam()
         for mid, r in zip(self.motor_ids, goals):
@@ -396,6 +706,110 @@ class TeleopNode(Node):
             self.get_logger().warn(
                 f"sync write goal: {self.packet.getTxRxResult(rc)}"
             )
+
+    # ---------------- gripper: current-based hold + state machine ----------------
+    def _setup_gripper_current_mode(self, hold_rad: float) -> None:
+        """Switch the gripper (last motor) into Current-Based Position control
+        with a bounded Goal Current, a gentle profile, and its goal preloaded to
+        the present position so it doesn't jump. After this the per-tick sync
+        goal-position write still drives it, but force is capped."""
+        gid = self.motor_ids[-1]
+        limit_raw = max(1, int(round(self.grip_current_limit / CURRENT_UNIT_MA)))
+        try:
+            self._write1(gid, ADDR_TORQUE_ENABLE, 0)
+            self._write1(gid, ADDR_OPERATING_MODE, OP_MODE_CURRENT_POSITION)
+            # Goal Current (2-byte) — the squeeze-force cap.
+            rc, err = self.packet.write2ByteTxRx(
+                self.port, gid, ADDR_GOAL_CURRENT, limit_raw & 0xFFFF
+            )
+            if rc != COMM_SUCCESS or err != 0:
+                self.get_logger().warn(f"gripper goal-current write rc={rc} err={err}")
+            # gentle profile so the close is slow/visible
+            self.packet.write4ByteTxRx(
+                self.port, gid, ADDR_PROFILE_VELOCITY, self.grip_profile_vel & 0xFFFFFFFF
+            )
+            self.packet.write4ByteTxRx(
+                self.port, gid, ADDR_GOAL_POSITION, rad_to_ticks(hold_rad) & 0xFFFFFFFF
+            )
+            self._write1(gid, ADDR_TORQUE_ENABLE, 1)
+            self._grip_mode5 = True
+            self.get_logger().info(
+                f"gripper ID {gid}: Current-Based Position mode, "
+                f"limit={self.grip_current_limit:.0f} mA ({limit_raw} raw)"
+            )
+        except Exception as exc:
+            self.get_logger().warn(f"gripper mode-5 setup failed: {exc}")
+            self._grip_mode5 = False
+
+    def _update_gripper(self, pos: float, cur: float) -> None:
+        """Classify the gripper state from a position/current sample already
+        obtained via this tick's shared sync-read, publish it, and log
+        transitions. The commanded goal (goal_rad[-1]) stays at the last
+        open/close target; because the motor is current-limited it holds an
+        object safely and, when the object is removed, the jaws collapse to the
+        close limit — which we report as DROPPED."""
+        self._grip_pos, self._grip_cur = pos, cur
+
+        at_close = abs(pos - self.grip_close) <= self.grip_close_tol
+        at_open = abs(pos - self.grip_open) <= self.grip_open_tol
+        prev = self._grip_state
+        action = self._grip_action
+
+        # debounced holding: sustained current while NOT fully closed
+        if cur >= self.grasp_threshold and not at_close:
+            self._grip_hold_count += 1
+        else:
+            self._grip_hold_count = 0
+        holding = self._grip_hold_count >= self.grasp_consecutive
+
+        if action == "open":
+            state = "OPEN" if at_open else "OPENING"
+        elif action == "close":
+            if holding:
+                state = "HOLDING"
+            elif at_close:
+                # jaws met the close limit with no resistance
+                state = "DROPPED" if prev in ("HOLDING", "DROPPED") else "CLOSED"
+            else:
+                state = "CLOSING"
+        else:  # nothing commanded yet
+            state = "OPEN" if at_open else ("CLOSED" if at_close else "MID")
+
+        if state != prev:
+            if state == "HOLDING":
+                self.get_logger().info(
+                    f"gripper: OBJECT GRASPED @ {pos:+.3f} rad, {cur:.0f} mA"
+                )
+            elif state == "DROPPED":
+                self.get_logger().warn(
+                    f"gripper: OBJECT DROPPED — jaws collapsed to close "
+                    f"@ {pos:+.3f} rad, {cur:.0f} mA"
+                )
+            elif state == "CLOSED":
+                self.get_logger().info(
+                    f"gripper: CLOSED empty (position limit) "
+                    f"@ {pos:+.3f} rad, {cur:.0f} mA"
+                )
+            elif state == "OPEN":
+                self.get_logger().info(f"gripper: OPEN @ {pos:+.3f} rad")
+            self._grip_state = state
+            self._publish_grip_state()
+        else:
+            # low-rate heartbeat so a fresh subscriber still gets the state
+            self._grip_pub_count += 1
+            if self._grip_pub_count >= max(1, int(self.publish_rate // 2)):
+                self._grip_pub_count = 0
+                self._publish_grip_state()
+
+    def _publish_grip_state(self) -> None:
+        if self.pub_grip is None:
+            return
+        m = String()
+        m.data = (
+            f"{self._grip_state} pos={self._grip_pos:+.3f} "
+            f"cur={self._grip_cur:.0f}mA"
+        )
+        self.pub_grip.publish(m)
 
     # ---------------- gentle startup ----------------
     def _gentle_torque_on(
@@ -502,6 +916,13 @@ class TeleopNode(Node):
         notice the child died and reset to "press F3 to start again"."""
         if self._parking:
             return
+        if self.sim_mode:
+            # In sim there's nothing to park / no torque to release. Just snap
+            # the goal back to the initial pose so RViz shows the reset.
+            with self.lock:
+                self.goal_rad = list(self.initial_pose)
+            self.get_logger().info("F1 (sim) → reset to initial pose")
+            return
         self._parking = True
         try:
             total_s = float(self.get_parameter("center_total_time_s").value)
@@ -584,17 +1005,56 @@ class TeleopNode(Node):
             if rising & BTN_F1 and not self._parking:
                 f1_pressed = True
 
+            # Select → toggle JOINT ↔ IK mode
+            if (rising & BTN_SELECT) and not self._parking:
+                if self.ik is None:
+                    self.get_logger().warn(
+                        "IK solver unavailable — cannot switch mode"
+                    )
+                else:
+                    self.mode = MODE_IK if self.mode == MODE_JOINT else MODE_JOINT
+                    if self.mode == MODE_IK:
+                        import numpy as np
+                        q = np.array(self.goal_rad[:6])
+                        # Seed the persistent target pose from the present tip
+                        # so the first jog starts exactly where the gripper is.
+                        xyz, R = self.ik.fk_pose(q)
+                        self.ik_target_pos = xyz.copy()
+                        self.ik_target_R = R.copy()
+                        m = self.ik.manipulability(q)
+                        if m < 1e-4:
+                            self.get_logger().warn(
+                                f"IK mode entered at near-singular pose "
+                                f"(manipulability={m:.2e}). Linear motion may "
+                                f"feel stuck — switch back to JOINT and "
+                                f"reposition (e.g. bend joint2 by ~30°), then "
+                                f"re-enter IK."
+                            )
+                        else:
+                            self.get_logger().info(
+                                f"Mode → IK  (tip at {xyz.round(3)}, "
+                                f"manipulability={m:.3f})"
+                            )
+                    else:
+                        self.ik_target_pos = None
+                        self.ik_target_R = None
+                        self.get_logger().info(f"Mode → {self.mode}")
+
             # edge-triggered gripper (only if gripper motor responded at startup)
             if self.gripper_live and not self._parking:
                 if rising & (1 << self.grip_btn_open):
+                    self._grip_action = "open"
+                    self._grip_hold_count = 0
                     self.goal_rad[-1] = self._clamp_grip(self.grip_open)
                     self.get_logger().info(
-                        f"gripper OPEN → {self.goal_rad[-1]:+.2f}"
+                        f"gripper → OPEN cmd ({self.goal_rad[-1]:+.2f})"
                     )
                 if rising & (1 << self.grip_btn_close):
+                    self._grip_action = "close"
+                    self._grip_hold_count = 0
                     self.goal_rad[-1] = self._clamp_grip(self.grip_close)
                     self.get_logger().info(
-                        f"gripper CLOSE → {self.goal_rad[-1]:+.2f}"
+                        f"gripper → CLOSE cmd ({self.goal_rad[-1]:+.2f})"
                     )
 
         if f1_pressed:
@@ -617,6 +1077,82 @@ class TeleopNode(Node):
         scaled = (abs(v) - self.axis_deadzone) / (1.0 - self.axis_deadzone)
         return sign * max(0.0, min(1.0, scaled))
 
+    # ---------------- automatic joint commands ----------------
+    def _on_joint_command(self, msg: JointState) -> None:
+        if self._parking:
+            self.get_logger().warn("joint_command ignored while parking")
+            return
+        if not msg.name or len(msg.position) != len(msg.name):
+            self.get_logger().warn("joint_command: name/position size mismatch")
+            return
+
+        updated = []
+        with self.lock:
+            name_to_index = {name: i for i, name in enumerate(self.joint_names)}
+            for name, pos in zip(msg.name, msg.position):
+                if name not in name_to_index:
+                    self.get_logger().warn(f"joint_command: unknown joint '{name}'")
+                    continue
+                idx = name_to_index[name]
+                target = float(pos)
+                if idx < self.n_arm:
+                    target = self._clamp(idx, target)
+                elif self.gripper_live and idx == self.n_total - 1:
+                    target = self._clamp_grip(target)
+                self.goal_rad[idx] = target
+                updated.append(name)
+
+        if updated:
+            self.get_logger().info(
+                f"joint_command applied for {updated}",
+                throttle_duration_sec=1.0,
+            )
+
+    # ---------------- IK mode helpers ----------------
+    def _compute_ik_inputs(self, keys: int, axes):
+        """Map remote inputs into a Cartesian linear velocity and an angular
+        velocity, BOTH in the fixed WORLD frame.
+
+        Translation moves the EoE along world axes (Up = world +z always).
+        Orientation rotates the gripper about fixed world axes at the EoE
+        point, so tilting the gripper never changes which way "Up" or "pitch"
+        go — the control stays intuitive no matter the arm's pose:
+          Up / Down        → world +z / -z
+          Left / Right      → world +y / -y
+          Y / A             → world +x / -x
+          roll  (X / B)     → rotation about world x
+          pitch (stick ry)  → rotation about world y
+          yaw   (R1 / R2)   → rotation about world z
+
+        Returns (lin_vel_world[3], ang_vel_world[3]).
+        Sign vector `ik_axis_signs[0..5]` flips [vx,vy,vz, roll,pitch,yaw].
+        """
+        import numpy as np
+        lin = self.ik_lin
+        ang = self.ik_ang
+        s = self.ik_signs
+
+        vx = vy = vz = 0.0
+        if keys & BTN_Y:   vx += lin
+        if keys & BTN_A:   vx -= lin
+        if keys & BTN_LEFT:  vy += lin
+        if keys & BTN_RIGHT: vy -= lin
+        if keys & BTN_UP:    vz += lin
+        if keys & BTN_DOWN:  vz -= lin
+
+        roll = 0.0   # about tool x
+        if keys & BTN_X:   roll += ang
+        if keys & BTN_B:   roll -= ang
+        ry = self._deadzone(axes[3]) if len(axes) > 3 else 0.0
+        pitch = ang * ry          # about tool y (right stick analog)
+        yaw = 0.0                 # about tool z
+        if keys & BTN_R1:  yaw += ang
+        if keys & BTN_R2:  yaw -= ang
+
+        lin_vel = np.array([s[0]*vx, s[1]*vy, s[2]*vz])
+        ang_vel = np.array([s[3]*roll, s[4]*pitch, s[5]*yaw])
+        return lin_vel, ang_vel
+
     # ---------------- main loop ----------------
     def _tick(self) -> None:
         if self._parking:
@@ -624,12 +1160,70 @@ class TeleopNode(Node):
         with self.lock:
             keys = self.keys
             axes = self.axes
+            mode = self.mode
             stale = (
                 (time.monotonic() - self.last_remote_t) > 0.5
                 if self.last_remote_t
                 else True
             )
-            if not stale:
+            if not stale and mode == MODE_IK and self.ik is not None and self.n_arm >= 6:
+                # ---- IK mode: persistent WORLD-frame target, arm tracks it ----
+                import numpy as np
+                lin_vel, ang_vel = self._compute_ik_inputs(keys, axes)
+
+                q = np.array(self.goal_rad[:6])
+                if self.ik_target_pos is None or self.ik_target_R is None:
+                    p0, R0 = self.ik.fk_pose(q)
+                    self.ik_target_pos = p0.copy()
+                    self.ik_target_R = R0.copy()
+
+                # Jog the persistent target in the WORLD frame:
+                #   translation → target_pos += v·dt  (world axes; "Up" is
+                #   always world-z no matter how the gripper is tilted)
+                #   rotation    → target_R = R_delta @ R  (pre-multiply = world
+                #   axes; "pitch" always tips about world-y, in place at EoE)
+                if (abs(lin_vel) > 1e-6).any():
+                    self.ik_target_pos = self.ik_target_pos + lin_vel * self.dt
+                if (abs(ang_vel) > 1e-6).any():
+                    R_delta = _rot_from_rotvec(ang_vel * self.dt)
+                    self.ik_target_R = R_delta @ self.ik_target_R
+
+                # Clamp the target so it can't lead the reachable EoE by more
+                # than ik_max_lead — keeps it from floating into unreachable
+                # space (which would create a dead zone when you reverse).
+                eoe_pos, _ = self.ik.fk_pose(q)
+                lead = self.ik_target_pos - eoe_pos
+                d = float(np.linalg.norm(lead))
+                if d > self.ik_max_lead:
+                    self.ik_target_pos = eoe_pos + lead * (self.ik_max_lead / d)
+
+                # Solve 6D pose IK so the arm tracks the target pose.
+                q_sol, _ = self.ik.solve_pose_ik(
+                    q, self.ik_target_pos, self.ik_target_R
+                )
+                q_clamped = np.array(
+                    [self._clamp(j, float(q_sol[j])) for j in range(6)]
+                )
+
+                # Self-collision gate: if the candidate pose would make links
+                # intersect, reject it — freeze the joints at the current pose
+                # and pull the target back to the EoE so it doesn't run away.
+                if (self.ik_self_collision
+                        and self.ik.self_collides(q_clamped, self.ik_collision_radius)):
+                    if not self._in_collision:
+                        self.get_logger().warn(
+                            "self-collision blocked — arm held at boundary",
+                            throttle_duration_sec=1.0,
+                        )
+                    self._in_collision = True
+                    # keep goal_rad unchanged; snap target back to actual EoE
+                    self.ik_target_pos, self.ik_target_R = self.ik.fk_pose(q)
+                else:
+                    self._in_collision = False
+                    for j in range(6):
+                        self.goal_rad[j] = float(q_clamped[j])
+            elif not stale:
+                # ---- JOINT mode: per-joint buttons / analog ----
                 step = self.joint_velocity * self.dt
                 for j in range(self.n_arm):
                     sign = self.joint_signs[j] if j < len(self.joint_signs) else 1.0
@@ -650,27 +1244,127 @@ class TeleopNode(Node):
                         self.goal_rad[j] = self._clamp(j, self.goal_rad[j] + delta)
             # else: hold last goals — arm freezes if remote stops
 
+        if self.sim_mode:
+            # No motors: goal_rad IS the state. Publish it so RViz shows it.
+            with self.lock:
+                positions = list(self.goal_rad)
+            m = JointState()
+            m.header.stamp = self.get_clock().now().to_msg()
+            m.name = list(self.joint_names)
+            m.position = positions
+            self.pub_state.publish(m)
+            self._publish_ee_marker(positions)
+            return
+
         # write goals every tick so motors actively track even without input
         try:
             self._write_goals_rad(self.goal_rad)
         except Exception as exc:
             self.get_logger().warn(f"write goals: {exc}")
 
-        # publish JointState
+        # single sync-read: every motor's position + the gripper's current in
+        # one transaction. Feed the gripper state machine from that same sample
+        # (no extra I/O), then publish JointState.
         try:
-            positions = self._read_positions_rad()
-            m = JointState()
-            m.header.stamp = self.get_clock().now().to_msg()
-            m.name = list(self.joint_names)
-            m.position = positions
-            self.pub_state.publish(m)
+            positions, grip_cur = self._read_present_block()
         except Exception as exc:
             self.get_logger().warn(
                 f"read positions: {exc}", throttle_duration_sec=2.0
             )
+            return
+
+        if self._grip_mode5 and self.gripper_live and grip_cur is not None:
+            self._update_gripper(positions[-1], grip_cur)
+
+        m = JointState()
+        m.header.stamp = self.get_clock().now().to_msg()
+        m.name = list(self.joint_names)
+        m.position = positions
+        self.pub_state.publish(m)
+        self._publish_ee_marker(positions)
+
+    def _triad_markers(self, ns, xyz, R, length, alpha, now):
+        """Build 3 ARROW markers (x=red, y=green, z=blue) for a pose triad."""
+        import numpy as np
+        origin = Point(x=float(xyz[0]), y=float(xyz[1]), z=float(xyz[2]))
+        colors = [(1.0, 0.1, 0.1), (0.1, 1.0, 0.1), (0.1, 0.4, 1.0)]
+        out = []
+        for axis in range(3):
+            tip = np.asarray(xyz) + np.asarray(R)[:, axis] * length
+            m = Marker()
+            m.header.frame_id = self.ik.base_link
+            m.header.stamp = now
+            m.ns = ns
+            m.id = axis
+            m.type = Marker.ARROW
+            m.action = Marker.ADD
+            m.points = [origin, Point(x=float(tip[0]), y=float(tip[1]), z=float(tip[2]))]
+            m.scale.x = 0.006
+            m.scale.y = 0.012
+            m.scale.z = 0.012
+            r, g, b = colors[axis]
+            m.color.r, m.color.g, m.color.b, m.color.a = r, g, b, alpha
+            out.append(m)
+        return out
+
+    def _publish_ee_marker(self, positions: List[float]) -> None:
+        """Publish two coordinate triads:
+          * ee_triad      — the ACTUAL gripper pose (solid arrows)
+          * target_triad  — the COMMANDED IK target pose (faded arrows)
+        They overlap when the arm is keeping up, and separate when the target
+        is jogged faster than the arm can follow or into unreachable space."""
+        if self.ik is None or len(positions) < 6:
+            return
+        try:
+            import numpy as np
+            xyz, R = self.ik.fk_pose(np.array(positions[:6]))
+        except Exception:
+            return
+        now = self.get_clock().now().to_msg()
+        arr = MarkerArray()
+        # actual EoE (solid, slightly shorter)
+        arr.markers.extend(self._triad_markers("ee_triad", xyz, R, 0.05, 1.0, now))
+        # collision indicator: red sphere at the EoE when blocked
+        coll = Marker()
+        coll.header.frame_id = self.ik.base_link
+        coll.header.stamp = now
+        coll.ns = "collision"
+        coll.id = 0
+        coll.type = Marker.SPHERE
+        if self._in_collision:
+            coll.action = Marker.ADD
+            coll.pose.position.x = float(xyz[0])
+            coll.pose.position.y = float(xyz[1])
+            coll.pose.position.z = float(xyz[2])
+            coll.pose.orientation.w = 1.0
+            coll.scale.x = coll.scale.y = coll.scale.z = 0.05
+            coll.color.r, coll.color.g, coll.color.b, coll.color.a = 1.0, 0.0, 0.0, 0.6
+        else:
+            coll.action = Marker.DELETE
+        arr.markers.append(coll)
+        # commanded target (faded, slightly longer) — only in IK mode
+        if (self.mode == MODE_IK and self.ik_target_pos is not None
+                and self.ik_target_R is not None):
+            arr.markers.extend(self._triad_markers(
+                "target_triad", self.ik_target_pos, self.ik_target_R,
+                0.07, 0.35, now,
+            ))
+        else:
+            # clear stale target arrows when not in IK mode
+            for axis in range(3):
+                m = Marker()
+                m.header.frame_id = self.ik.base_link
+                m.header.stamp = now
+                m.ns = "target_triad"
+                m.id = axis
+                m.action = Marker.DELETE
+                arr.markers.append(m)
+        self.pub_marker.publish(arr)
 
     # ---------------- lifecycle ----------------
     def destroy_node(self):
+        if self.sim_mode:
+            return super().destroy_node()
         try:
             self.get_logger().info(
                 "Shutdown — leaving torque enabled. Use dynamixel wizard to "
@@ -682,7 +1376,8 @@ class TeleopNode(Node):
                 pass
         finally:
             try:
-                self.port.closePort()
+                if self.port is not None:
+                    self.port.closePort()
             except Exception:
                 pass
             return super().destroy_node()

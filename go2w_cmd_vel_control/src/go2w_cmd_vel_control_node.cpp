@@ -8,9 +8,12 @@
 #include "unitree_api/msg/request.hpp"
 
 namespace {
+constexpr int32_t kApiBalanceStand = 1002;
 constexpr int32_t kApiStopMove = 1003;
 constexpr int32_t kApiStandUp = 1004;
 constexpr int32_t kApiMove = 1008;
+constexpr int32_t kApiSwitchGait = 1011;
+constexpr int32_t kApiSwitchJoystick = 1027;
 }  // namespace
 
 class Go2wCmdVelControlNode : public rclcpp::Node {
@@ -28,6 +31,11 @@ class Go2wCmdVelControlNode : public rclcpp::Node {
     max_linear_y_ = this->declare_parameter<double>("max_linear_y", 0.4);
     max_angular_z_ = this->declare_parameter<double>("max_angular_z", 1.0);
     auto_stand_up_ = this->declare_parameter<bool>("auto_stand_up", true);
+    auto_balance_stand_ = this->declare_parameter<bool>("auto_balance_stand", true);
+    auto_disable_joystick_ = this->declare_parameter<bool>("auto_disable_joystick", false);
+    startup_gait_ = this->declare_parameter<int>("startup_gait", 1);
+    startup_repeats_ = this->declare_parameter<int>("startup_repeats", 5);
+    enforce_move_prereqs_ = this->declare_parameter<bool>("enforce_move_prereqs", true);
 
     request_pub_ = this->create_publisher<unitree_api::msg::Request>(request_topic_, 10);
     cmd_vel_sub_ = this->create_subscription<geometry_msgs::msg::Twist>(
@@ -44,11 +52,6 @@ class Go2wCmdVelControlNode : public rclcpp::Node {
         std::chrono::duration_cast<std::chrono::milliseconds>(period),
         [this]() { this->OnTimer(); });
 
-    if (auto_stand_up_) {
-      PublishStandUp();
-      RCLCPP_INFO(this->get_logger(), "Sent StandUp (api_id=%d)", kApiStandUp);
-    }
-
     RCLCPP_INFO(this->get_logger(),
                 "go2w_cmd_vel_control started. cmd_vel=%s request=%s rate=%.1fHz timeout=%.2fs",
                 cmd_vel_topic_.c_str(), request_topic_.c_str(), control_rate_hz_,
@@ -64,6 +67,10 @@ class Go2wCmdVelControlNode : public rclcpp::Node {
   }
 
   void OnTimer() {
+    if (PublishStartupSequence()) {
+      return;
+    }
+
     const double age = (this->now() - last_cmd_time_).seconds();
     if (age > cmd_timeout_sec_) {
       if (!is_stopped_) {
@@ -84,6 +91,65 @@ class Go2wCmdVelControlNode : public rclcpp::Node {
     request_pub_->publish(req);
   }
 
+  void PublishBalanceStand() {
+    unitree_api::msg::Request req;
+    req.header.identity.api_id = kApiBalanceStand;
+    req.parameter.clear();
+    request_pub_->publish(req);
+  }
+
+  void PublishSwitchJoystick(bool enabled) {
+    unitree_api::msg::Request req;
+    req.header.identity.api_id = kApiSwitchJoystick;
+    req.parameter = enabled ? "{\"data\":true}" : "{\"data\":false}";
+    request_pub_->publish(req);
+  }
+
+  void PublishSwitchGait(int gait) {
+    unitree_api::msg::Request req;
+    req.header.identity.api_id = kApiSwitchGait;
+
+    char param_buf[64];
+    std::snprintf(param_buf, sizeof(param_buf), "{\"data\":%d}", gait);
+    req.parameter = param_buf;
+
+    request_pub_->publish(req);
+  }
+
+  bool PublishStartupSequence() {
+    if (startup_repeats_ <= 0) {
+      return false;
+    }
+
+    bool published = false;
+    if (auto_stand_up_) {
+      PublishStandUp();
+      published = true;
+    }
+    if (auto_balance_stand_) {
+      PublishBalanceStand();
+      published = true;
+    }
+    if (auto_disable_joystick_) {
+      PublishSwitchJoystick(false);
+      published = true;
+    }
+    if (startup_gait_ >= 0) {
+      PublishSwitchGait(startup_gait_);
+      published = true;
+    }
+
+    startup_repeats_ -= 1;
+    if (published && startup_repeats_ == 0) {
+      RCLCPP_INFO(
+          this->get_logger(),
+          "Startup sport setup sent: stand_up=%s balance_stand=%s joystick=%s gait=%d",
+          auto_stand_up_ ? "true" : "false", auto_balance_stand_ ? "true" : "false",
+          auto_disable_joystick_ ? "disabled" : "unchanged", startup_gait_);
+    }
+    return published;
+  }
+
   void PublishStop() {
     unitree_api::msg::Request req;
     req.header.identity.api_id = kApiStopMove;
@@ -94,6 +160,16 @@ class Go2wCmdVelControlNode : public rclcpp::Node {
   }
 
   void PublishMove(double vx, double vy, double wz) {
+    if (enforce_move_prereqs_ && move_publish_count_ % 20 == 0) {
+      if (auto_disable_joystick_) {
+        PublishSwitchJoystick(false);
+      }
+      if (startup_gait_ >= 0) {
+        PublishSwitchGait(startup_gait_);
+      }
+    }
+    move_publish_count_ += 1;
+
     unitree_api::msg::Request req;
     req.header.identity.api_id = kApiMove;
 
@@ -125,6 +201,12 @@ class Go2wCmdVelControlNode : public rclcpp::Node {
   double max_linear_y_{};
   double max_angular_z_{};
   bool auto_stand_up_{};
+  bool auto_balance_stand_{};
+  bool auto_disable_joystick_{};
+  bool enforce_move_prereqs_{};
+  int startup_gait_{};
+  int startup_repeats_{};
+  int move_publish_count_{};
 };
 
 int main(int argc, char **argv) {

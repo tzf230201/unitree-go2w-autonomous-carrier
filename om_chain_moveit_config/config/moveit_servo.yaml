@@ -1,0 +1,57 @@
+###############################################
+# MoveIt Servo config for the 6-DOF OM Chain  #
+###############################################
+
+# Commands
+command_in_type: "unitless"   # twist values in [-1,1], scaled below
+scale:
+  linear: 0.10        # m/s at full deflection
+  rotational: 0.6     # rad/s at full deflection
+  joint: 0.5
+
+# Publish rate / smoothing
+publish_period: 0.020          # 50 Hz
+low_latency_mode: false
+command_out_type: trajectory_msgs/JointTrajectory
+publish_joint_positions: true
+publish_joint_velocities: false
+publish_joint_accelerations: false
+use_gazebo: false
+
+# Smoothing plugin
+smoothing_filter_plugin_name: "online_signal_smoothing::ButterworthFilterPlugin"
+
+# MoveIt properties
+move_group_name: arm
+planning_frame: world
+ee_frame_name: end_effector_link
+robot_link_command_frame: world      # twists interpreted in WORLD frame
+                                     # → "Up" is world-z regardless of gripper tilt
+
+# Incoming command topics
+cartesian_command_in_topic: ~/delta_twist_cmds
+joint_command_in_topic: ~/delta_joint_cmds
+joint_topic: /joint_states
+status_topic: ~/status
+command_out_topic: /arm_controller/joint_trajectory
+
+# Singularity handling
+lower_singularity_threshold: 17.0
+hard_stop_singularity_threshold: 30.0
+leaving_singularity_threshold_multiplier: 2.0
+
+# Joint limits
+joint_limit_margin: 0.1
+low_pass_filter_coeff: 2.0
+
+# Collision checking — this is the whole point: stop before self/scene collision
+check_collisions: true
+collision_check_rate: 10.0
+self_collision_proximity_threshold: 0.005
+scene_collision_proximity_threshold: 0.02
+
+# Incoming command timeout (s): zero the motion if no command arrives
+incoming_command_timeout: 0.2
+num_outgoing_halt_msgs_to_publish: 4
+halt_all_joints_in_joint_mode: true
+halt_all_joints_in_cartesian_mode: true

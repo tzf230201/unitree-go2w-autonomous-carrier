@@ -238,6 +238,7 @@ up. On systemd restart the boot-torque step re-runs.
 | Topic | Direction | Type | Notes |
 |---|---|---|---|
 | `/wirelesscontroller` | Sub | `unitree_go/msg/WirelessController` | BEST_EFFORT QoS. Both nodes subscribe. |
+| `/go2w_remote_arm/joint_command` | Sub | `sensor_msgs/msg/JointState` | Optional absolute joint target command used by `demo_june_2026`. |
 | `/joint_states` | Pub | `sensor_msgs/msg/JointState` | Published by `teleop_node` at the loop rate (default 50 Hz). |
 
 ---
