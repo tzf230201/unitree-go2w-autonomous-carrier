@@ -50,8 +50,10 @@ from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import PoseStamped
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
+from rclpy.duration import Duration
 from rclpy.node import Node
 from std_srvs.srv import Trigger
+from visualization_msgs.msg import Marker, MarkerArray
 
 from .moveit_client import MoveItClient
 
@@ -122,10 +124,12 @@ class TagPickPlaceNode(Node):
         self.named_poses: Dict[str, Dict[str, float]] = {}
         srdf_path = str(self.get_parameter("srdf_file").value)
         if not srdf_path:
+            # canonical SRDF = the open_manipulator_6dof one (tip at the
+            # gripper). om_chain_moveit_config's SRDF (tip at link7) is legacy.
             try:
                 srdf_path = str(
-                    Path(get_package_share_directory("om_chain_moveit_config"))
-                    / "srdf" / "om_chain.srdf"
+                    Path(get_package_share_directory("open_manipulator_6dof_moveit"))
+                    / "config" / "open_manipulator_6dof.srdf"
                 )
             except Exception:
                 srdf_path = ""
@@ -174,9 +178,58 @@ class TagPickPlaceNode(Node):
         self.create_service(
             Trigger, "/tag_world", self._on_tag_world, callback_group=self._cb_group,
         )
+
+        # ---- RViz markers: where the arm thinks the tag / pick poses are ----
+        self._marker_pub = self.create_publisher(MarkerArray, "/tag_markers", 2)
+        self.create_timer(0.5, self._publish_markers, callback_group=self._cb_group)
+
         self.get_logger().info(
             "ready — check extrinsic with /tag_world, then /run_tag_pick"
         )
+
+    # ---------------- RViz markers ----------------
+    def _make_marker(self, mid: int, mtype: int, pos, scale, rgba) -> Marker:
+        m = Marker()
+        m.header.frame_id = str(self.get_parameter("reference_frame").value)
+        m.header.stamp = self.get_clock().now().to_msg()
+        m.ns = "tag_pick"
+        m.id = mid
+        m.type = mtype
+        m.action = Marker.ADD
+        m.pose.position.x, m.pose.position.y, m.pose.position.z = \
+            float(pos[0]), float(pos[1]), float(pos[2])
+        m.pose.orientation.w = 1.0
+        m.scale.x, m.scale.y, m.scale.z = scale
+        m.color.r, m.color.g, m.color.b, m.color.a = rgba
+        m.lifetime = Duration(seconds=1.5).to_msg()
+        return m
+
+    def _publish_markers(self) -> None:
+        tag = self._tag_world()
+        if tag is None:
+            return
+        approach = float(self.get_parameter("approach_offset").value)
+        grasp = float(self.get_parameter("grasp_offset").value)
+        arr = MarkerArray()
+        # the cube (tag on its top face → cube centre is 15 mm below the tag)
+        arr.markers.append(self._make_marker(
+            0, Marker.CUBE, tag - [0, 0, 0.015],
+            (0.03, 0.03, 0.03), (0.1, 0.9, 0.1, 0.8)))
+        # grasp target for the EE
+        arr.markers.append(self._make_marker(
+            1, Marker.SPHERE, tag + [0, 0, grasp],
+            (0.015, 0.015, 0.015), (0.9, 0.2, 0.2, 0.9)))
+        # approach (hover) point
+        arr.markers.append(self._make_marker(
+            2, Marker.SPHERE, tag + [0, 0, approach],
+            (0.02, 0.02, 0.02), (0.2, 0.4, 1.0, 0.9)))
+        # label with coordinates
+        label = self._make_marker(
+            3, Marker.TEXT_VIEW_FACING, tag + [0, 0, approach + 0.05],
+            (0.0, 0.0, 0.025), (1.0, 1.0, 1.0, 1.0))
+        label.text = f"tag ({tag[0]:+.2f}, {tag[1]:+.2f}, {tag[2]:+.2f})"
+        arr.markers.append(label)
+        self._marker_pub.publish(arr)
 
     # ---------------- SRDF ----------------
     def _load_srdf(self, path: str) -> None:

@@ -257,7 +257,9 @@ class TeleopNode(Node):
         self.declare_parameter("ik_enabled", True)
         self.declare_parameter("ik_base_link", "world")
         self.declare_parameter("ik_tip_link", "end_effector_link")
-        self.declare_parameter("ik_urdf_pkg", "om_chain_bringup")
+        # canonical kinematics source = the open-source 6dof description
+        # (same numbers as om_chain, but single-sourced with MoveIt's SRDF)
+        self.declare_parameter("ik_urdf_pkg", "open_manipulator_6dof_description")
         self.declare_parameter("ik_lin_speed", 0.05)   # m/s while button held
         self.declare_parameter("ik_ang_speed", 0.5)    # rad/s while button held
         # Damped least-squares lambda. Lower = more responsive, but more

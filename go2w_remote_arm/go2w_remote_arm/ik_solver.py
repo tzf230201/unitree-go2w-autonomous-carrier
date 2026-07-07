@@ -77,11 +77,14 @@ def _kdl_chain_from_urdf(urdf_str: str, base_link: str, tip_link: str) -> PyKDL.
 
 
 def render_chain_urdf(
-    pkg: str = "om_chain_bringup",
-    xacro_rel: str = "urdf/om_chain.urdf.xacro",
+    pkg: str = "open_manipulator_6dof_description",
+    xacro_rel: str = "urdf/open_manipulator_6dof.urdf.xacro",
     extra_args: List[str] | None = None,
 ) -> str:
-    """Render the rig's URDF xacro to a string."""
+    """Render the rig's URDF xacro to a string.
+
+    Default = the open-source 6dof description: the single canonical
+    kinematics source, shared with move_group and Servo."""
     share = Path(get_package_share_directory(pkg))
     xacro_path = share / xacro_rel
     if not xacro_path.exists():
@@ -100,10 +103,11 @@ class IKSolver:
         self,
         base_link: str = "world",
         tip_link: str = "end_effector_link",
-        urdf_pkg: str = "om_chain_bringup",
+        urdf_pkg: str = "open_manipulator_6dof_description",
         damping: float = 0.1,
+        xacro_rel: str = "urdf/open_manipulator_6dof.urdf.xacro",
     ) -> None:
-        urdf_str = render_chain_urdf(urdf_pkg)
+        urdf_str = render_chain_urdf(urdf_pkg, xacro_rel)
         self.chain, self.q_min, self.q_max = _kdl_chain_from_urdf(
             urdf_str, base_link, tip_link
         )

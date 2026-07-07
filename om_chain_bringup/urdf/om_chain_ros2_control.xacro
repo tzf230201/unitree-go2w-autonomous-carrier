@@ -38,6 +38,10 @@
           <param name="port_name">${port_name}</param>
           <param name="baud_rate">${baudrate}</param>
           <param name="error_timeout_sec">0.5</param>
+          <!-- Plain SyncRead from the start. FastSyncRead is tighter on bus
+               timing and throws -3001 SYNC_READ_FAIL on the first cycle after
+               activation + sporadically under CPU load. -->
+          <param name="use_fast_read_protocol">0</param>
           <param name="dynamixel_model_folder">/param/dxl_model</param>
           <param name="number_of_joints">7</param>
           <param name="number_of_transmissions">7</param>

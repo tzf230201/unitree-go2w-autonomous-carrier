@@ -9,8 +9,10 @@
 # Alternative forms still supported:  `named: rest` or `xyz: [..] rpy: [..]`.
 
 waypoints:
+  # "home_pose" from the open_manipulator_6dof SRDF (same joint values as
+  # the old om_chain "rest" pose).
   start_pose:
-    named: rest
+    named: home_pose
 
   # Initial guesses derived from the joint state right after the previous
   # `pick_above` (Cartesian) waypoint succeeded — known to be reachable.

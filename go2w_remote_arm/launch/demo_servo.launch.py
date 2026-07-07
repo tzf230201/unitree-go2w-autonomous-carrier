@@ -39,14 +39,14 @@ def generate_launch_description():
     # 2. move_group (provides the planning scene Servo uses for collision)
     move_group = TimerAction(period=3.0, actions=[IncludeLaunchDescription(
         PythonLaunchDescriptionSource(PathJoinSubstitution([
-            FindPackageShare("om_chain_moveit_config"), "launch", "move_group.launch.py",
+            FindPackageShare("open_manipulator_6dof_moveit"), "launch", "move_group.launch.py",
         ])),
     )])
 
     # 3. Servo node
     servo = TimerAction(period=5.0, actions=[IncludeLaunchDescription(
         PythonLaunchDescriptionSource(PathJoinSubstitution([
-            FindPackageShare("om_chain_moveit_config"), "launch", "servo.launch.py",
+            FindPackageShare("open_manipulator_6dof_moveit"), "launch", "servo.launch.py",
         ])),
     )])
 
@@ -62,7 +62,7 @@ def generate_launch_description():
     # 5. RViz (MoveIt motion-planning panel shows the live collision-checked arm)
     rviz = TimerAction(period=6.0, actions=[IncludeLaunchDescription(
         PythonLaunchDescriptionSource(PathJoinSubstitution([
-            FindPackageShare("om_chain_moveit_config"), "launch", "moveit_rviz.launch.py",
+            FindPackageShare("open_manipulator_6dof_moveit"), "launch", "moveit_rviz.launch.py",
         ])),
     )])
 

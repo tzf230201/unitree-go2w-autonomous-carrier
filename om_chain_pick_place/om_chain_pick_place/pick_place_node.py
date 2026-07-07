@@ -96,10 +96,12 @@ class PickPlaceNode(Node):
         self.named_poses: Dict[str, Dict[str, float]] = {}
         srdf_path = str(self.get_parameter("srdf_file").value)
         if not srdf_path:
+            # canonical SRDF = the open_manipulator_6dof one (tip at the
+            # gripper). om_chain_moveit_config's SRDF (tip at link7) is legacy.
             try:
                 srdf_path = str(
-                    Path(get_package_share_directory("om_chain_moveit_config"))
-                    / "srdf" / "om_chain.srdf"
+                    Path(get_package_share_directory("open_manipulator_6dof_moveit"))
+                    / "config" / "open_manipulator_6dof.srdf"
                 )
             except Exception as exc:
                 self.get_logger().warn(
