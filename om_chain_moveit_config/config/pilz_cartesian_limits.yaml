@@ -1,6 +1,0 @@
-# Cartesian-space limits used by the Pilz Industrial Motion Planner.
-cartesian_limits:
-  max_trans_vel: 0.2          # m/s
-  max_trans_acc: 0.5          # m/s^2
-  max_trans_dec: -1.0         # m/s^2
-  max_rot_vel: 1.0            # rad/s

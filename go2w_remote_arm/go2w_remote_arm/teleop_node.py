@@ -43,7 +43,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPo
 from unitree_go.msg import WirelessController
 from std_msgs.msg import String
 from sensor_msgs.msg import JointState
-from geometry_msgs.msg import Point
+from geometry_msgs.msg import Point, PoseStamped
 from visualization_msgs.msg import Marker, MarkerArray
 
 from dynamixel_sdk import (
@@ -146,6 +146,51 @@ def _rot_from_rotvec(rotvec) -> "object":
     return np.eye(3) + np.sin(theta) * K + (1.0 - np.cos(theta)) * (K @ K)
 
 
+def _quat_to_matrix(x: float, y: float, z: float, w: float):
+    import numpy as np
+    n = math.sqrt(x * x + y * y + z * z + w * w)
+    if n < 1e-9:
+        return np.eye(3)
+    x, y, z, w = x / n, y / n, z / n, w / n
+    return np.array([
+        [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+        [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+        [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+    ])
+
+
+def _matrix_to_quat(R):
+    """3×3 rotation → (x, y, z, w)."""
+    import numpy as np
+    R = np.asarray(R, dtype=float)
+    t = float(np.trace(R))
+    if t > 0.0:
+        s = math.sqrt(t + 1.0) * 2.0
+        w = 0.25 * s
+        x = (R[2, 1] - R[1, 2]) / s
+        y = (R[0, 2] - R[2, 0]) / s
+        z = (R[1, 0] - R[0, 1]) / s
+    elif R[0, 0] > R[1, 1] and R[0, 0] > R[2, 2]:
+        s = math.sqrt(1.0 + R[0, 0] - R[1, 1] - R[2, 2]) * 2.0
+        w = (R[2, 1] - R[1, 2]) / s
+        x = 0.25 * s
+        y = (R[0, 1] + R[1, 0]) / s
+        z = (R[0, 2] + R[2, 0]) / s
+    elif R[1, 1] > R[2, 2]:
+        s = math.sqrt(1.0 + R[1, 1] - R[0, 0] - R[2, 2]) * 2.0
+        w = (R[0, 2] - R[2, 0]) / s
+        x = (R[0, 1] + R[1, 0]) / s
+        y = 0.25 * s
+        z = (R[1, 2] + R[2, 1]) / s
+    else:
+        s = math.sqrt(1.0 + R[2, 2] - R[0, 0] - R[1, 1]) * 2.0
+        w = (R[1, 0] - R[0, 1]) / s
+        x = (R[0, 2] + R[2, 0]) / s
+        y = (R[1, 2] + R[2, 1]) / s
+        z = 0.25 * s
+    return float(x), float(y), float(z), float(w)
+
+
 class TeleopNode(Node):
     def __init__(self) -> None:
         super().__init__("go2w_remote_arm")
@@ -157,7 +202,7 @@ class TeleopNode(Node):
         # /joint_states so RViz (robot_state_publisher) visualizes the motion.
         # Lets you verify the control feel against the URDF before touching HW.
         self.declare_parameter("sim_mode", False)
-        self.declare_parameter("device", "/dev/ttyUSB0")
+        self.declare_parameter("device", "/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FT5NUUIQ-if00-port0")
         self.declare_parameter("baudrate", 1000000)
         self.declare_parameter(
             "joint_names",
@@ -223,7 +268,43 @@ class TeleopNode(Node):
         self.declare_parameter("startup_slow_acc", 10)
         self.declare_parameter("run_vel", 100)
         self.declare_parameter("run_acc", 30)
+        # ---- smooth Cartesian streaming (Time-based Profile) ----
+        # Velocity-based profiles make each joint finish its sub-move on its
+        # own schedule (far joints lag) → bent Cartesian paths. Time-based
+        # profiles make ALL joints arrive together every tick → coordinated,
+        # smooth motion. stream_profile_ms should be ~3-5x the tick period so
+        # consecutive goals blend into one continuous motion.
+        self.declare_parameter("smooth_stream", True)
+        self.declare_parameter("stream_profile_ms", 150)
+        self.declare_parameter("stream_accel_ms", 50)
+        # max joint speed in IK (cmd_vel) mode, rad/s
+        self.declare_parameter("ik_qdot_max", 1.2)
+        # pose-anchor feedback gains: pin the EE at the commanded pose so a
+        # pure rotation really pivots ABOUT the EoE (no translation leak from
+        # the damped pseudoinverse / joint limits), and translation holds the
+        # current orientation.
+        self.declare_parameter("ik_pos_gain", 4.0)   # 1/s
+        self.declare_parameter("ik_rot_gain", 3.0)   # 1/s
+        # rotation inputs are about TOOL axes (roll = around the gripper's
+        # own axis) instead of world axes
+        self.declare_parameter("ik_tool_frame_rotation", True)
         self.declare_parameter("settle_seconds", 0.5)
+
+        # ---- Cartesian-goal servo (arm-server mode for autonomous pick) ----
+        # An external node publishes a tool-pose goal on /arm_cart_goal; the
+        # tick loop drives the EoE there in a STRAIGHT line at a capped
+        # Cartesian speed using the same PyKDL solver as the remote's IK jog.
+        # Progress is reported on /arm_cart_status ("moving"/"reached"/
+        # "unreachable"/"idle") and the live tool pose on /arm_cart_state.
+        # A remote-stick input always overrides an active Cartesian goal
+        # (deadman safety).
+        self.declare_parameter("cart_enabled", True)
+        self.declare_parameter("cart_goal_topic", "/arm_cart_goal")
+        self.declare_parameter("cart_lin_speed", 0.05)   # m/s straight-line
+        self.declare_parameter("cart_ang_speed", 0.6)    # rad/s
+        self.declare_parameter("cart_pos_tol", 0.006)    # m "reached"
+        self.declare_parameter("cart_ang_tol", 0.10)     # rad "reached"
+        self.declare_parameter("cart_stall_iters", 40)   # ticks of no progress
 
         # startup centering via Time-based Profile (trapezoidal/triangular)
         self.declare_parameter("center_on_startup", True)
@@ -235,8 +316,8 @@ class TeleopNode(Node):
 
         # After centering, optionally move into a folded "ready" pose so IK
         # mode is usable immediately (q=0 vertical is a true singularity,
-        # IK is locked there). Default matches the `rest` group_state in
-        # om_chain_moveit_config (manipulability ≈ 6e-4, well away from 0).
+        # IK is locked there). Default matches the MoveIt `rest` group_state
+        # (manipulability approx 6e-4, well away from 0).
         self.declare_parameter("fold_after_center", True)
         self.declare_parameter("fold_total_time_s", 3.0)
         self.declare_parameter("fold_accel_time_s", 1.5)
@@ -531,6 +612,11 @@ class TeleopNode(Node):
         if self.gripper_live and bool(self.get_parameter("grasp_on_close").value):
             self._setup_gripper_current_mode(present[-1])
 
+        # Smooth streaming: arm joints on Time-based Profile so goals stream
+        # as coordinated moves (all joints arrive together each tick).
+        if bool(self.get_parameter("smooth_stream").value):
+            self._enable_stream_profile()
+
     # ------------------------------------------------------------------ #
     #  simulation init (no hardware — RViz visualization)                #
     # ------------------------------------------------------------------ #
@@ -585,6 +671,10 @@ class TeleopNode(Node):
             history=HistoryPolicy.KEEP_LAST,
         )
         self.pub_grip = self.create_publisher(String, self.grip_state_topic, grip_qos)
+        # External gripper command — same code path as the remote button, so
+        # autonomous grasps (direct_pick) behave like the working remote grasp.
+        self.create_subscription(
+            String, "/go2w_remote_arm/gripper_cmd", self._on_gripper_cmd, 10)
         if bool(self.get_parameter("enable_joint_command_subscriber").value):
             self.create_subscription(
                 JointState,
@@ -596,6 +686,41 @@ class TeleopNode(Node):
                 f"Automatic joint commands enabled on "
                 f"{self.get_parameter('joint_command_topic').value}"
             )
+        # ---- Cartesian-goal servo I/O (arm-server for autonomous pick) ----
+        self._cart_target_pos = None   # np.array(3) world, or None = idle
+        self._cart_target_R = None     # np.array(3,3) or None
+        self._cart_hold = False        # True = tracking: follow a moving
+        # target continuously, never auto-cancel on reach
+        self._cart_status = "idle"
+        self._cart_stall = 0
+        self._cart_last_err = None
+        if bool(self.get_parameter("cart_enabled").value):
+            self.create_subscription(
+                PoseStamped,
+                str(self.get_parameter("cart_goal_topic").value),
+                self._on_cart_goal, 10,
+            )
+            # continuous TRACKING target — follow a moving pose (e.g. a
+            # visually-tracked object) without ever auto-cancelling.
+            self.create_subscription(
+                PoseStamped, "/arm_cart_track", self._on_cart_track, 10)
+            self.create_subscription(
+                String, "/arm_cart_stop", self._on_cart_stop, 10)
+            self.pub_cart_state = self.create_publisher(
+                PoseStamped, "/arm_cart_state", 10)
+            self.pub_cart_status = self.create_publisher(
+                String, "/arm_cart_status",
+                QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                           durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                           history=HistoryPolicy.KEEP_LAST))
+            self.get_logger().info(
+                "Cartesian-goal servo enabled on "
+                f"{self.get_parameter('cart_goal_topic').value} "
+                "(→ /arm_cart_state, /arm_cart_status)")
+        else:
+            self.pub_cart_state = None
+            self.pub_cart_status = None
+
         self.dt = 1.0 / self.publish_rate
         self.create_timer(self.dt, self._tick)
 
@@ -658,6 +783,47 @@ class TeleopNode(Node):
             self.get_logger().warn(
                 f"write1 id={dxl_id} addr={addr}: rc={rc} err={err}"
             )
+
+    def _set_profile_ids(self, ids, vel_ticks: int, acc_ticks: int) -> None:
+        """Profile write for a subset of motors (e.g. arm only, not gripper)."""
+        self.sync_write_vel.clearParam()
+        self.sync_write_acc.clearParam()
+        for mid in ids:
+            self.sync_write_vel.addParam(mid, _u32(vel_ticks))
+            self.sync_write_acc.addParam(mid, _u32(acc_ticks))
+        rc = self.sync_write_vel.txPacket()
+        if rc != 0:
+            raise IOError(f"profile vel write: {self.packet.getTxRxResult(rc)}")
+        rc = self.sync_write_acc.txPacket()
+        if rc != 0:
+            raise IOError(f"profile acc write: {self.packet.getTxRxResult(rc)}")
+
+    def _arm_ids(self):
+        return self.motor_ids[:self.n_arm]
+
+    def _enable_stream_profile(self) -> None:
+        """Switch the ARM joints (not the gripper) to Time-based Profile
+        streaming so every tick's goal is reached by all joints
+        simultaneously — coordinated Cartesian motion. Requires a brief
+        torque-off (Drive Mode is EEPROM)."""
+        ms = int(self.get_parameter("stream_profile_ms").value)
+        acc = int(self.get_parameter("stream_accel_ms").value)
+        acc = min(acc, ms // 2)
+        arm = self._arm_ids()
+        present = self._read_positions_rad()
+        for mid in arm:
+            self._write1(mid, ADDR_TORQUE_ENABLE, 0)
+        for mid in arm:
+            self._write1(mid, ADDR_DRIVE_MODE, DRIVE_MODE_TIME_BASED)
+        self._set_profile_ids(arm, ms, acc)
+        # goals = present so nothing snaps when torque returns
+        self._write_goals_rad(present)
+        for mid in arm:
+            self._write1(mid, ADDR_TORQUE_ENABLE, 1)
+        self.get_logger().info(
+            f"smooth stream ON: arm joints Time-based Profile "
+            f"({ms} ms move / {acc} ms accel per goal)"
+        )
 
     def _set_profile(self, vel_ticks: int, acc_ticks: int) -> None:
         self.sync_write_vel.clearParam()
@@ -1045,19 +1211,9 @@ class TeleopNode(Node):
             # edge-triggered gripper (only if gripper motor responded at startup)
             if self.gripper_live and not self._parking:
                 if rising & (1 << self.grip_btn_open):
-                    self._grip_action = "open"
-                    self._grip_hold_count = 0
-                    self.goal_rad[-1] = self._clamp_grip(self.grip_open)
-                    self.get_logger().info(
-                        f"gripper → OPEN cmd ({self.goal_rad[-1]:+.2f})"
-                    )
+                    self._do_gripper("open")
                 if rising & (1 << self.grip_btn_close):
-                    self._grip_action = "close"
-                    self._grip_hold_count = 0
-                    self.goal_rad[-1] = self._clamp_grip(self.grip_close)
-                    self.get_logger().info(
-                        f"gripper → CLOSE cmd ({self.goal_rad[-1]:+.2f})"
-                    )
+                    self._do_gripper("close")
 
         if f1_pressed:
             self._park_and_release()
@@ -1080,6 +1236,31 @@ class TeleopNode(Node):
         return sign * max(0.0, min(1.0, scaled))
 
     # ---------------- automatic joint commands ----------------
+    def _do_gripper(self, which: str) -> None:
+        """The single gripper open/close action — used by BOTH the remote
+        button and the external /gripper_cmd topic, so autonomous grasps
+        behave exactly like the (working) remote grasp: sets _grip_action so
+        the current-based grasp state machine engages, resets the hold
+        counter, and commands the open/close target."""
+        if not self.gripper_live or self._parking:
+            return
+        if which == "open":
+            self._grip_action = "open"
+            self._grip_hold_count = 0
+            self.goal_rad[-1] = self._clamp_grip(self.grip_open)
+        elif which == "close":
+            self._grip_action = "close"
+            self._grip_hold_count = 0
+            self.goal_rad[-1] = self._clamp_grip(self.grip_close)
+        else:
+            self.get_logger().warn(f"gripper_cmd: unknown '{which}'")
+            return
+        self.get_logger().info(
+            f"gripper → {which.upper()} cmd ({self.goal_rad[-1]:+.2f})")
+
+    def _on_gripper_cmd(self, msg: String) -> None:
+        self._do_gripper(msg.data.strip().lower())
+
     def _on_joint_command(self, msg: JointState) -> None:
         if self._parking:
             self.get_logger().warn("joint_command ignored while parking")
@@ -1109,6 +1290,149 @@ class TeleopNode(Node):
                 f"joint_command applied for {updated}",
                 throttle_duration_sec=1.0,
             )
+
+    # ---------------- Cartesian-goal servo ----------------
+    def _on_cart_goal(self, msg: PoseStamped) -> None:
+        """Accept a tool-pose goal in the arm base frame. Setting it activates
+        the straight-line servo in the tick loop."""
+        if self.ik is None or self.n_arm < 6:
+            self.get_logger().warn("cart goal ignored: IK not available")
+            return
+        import numpy as np
+        p = msg.pose.position
+        q = msg.pose.orientation
+        with self.lock:
+            self._cart_target_pos = np.array([p.x, p.y, p.z], dtype=float)
+            self._cart_target_R = _quat_to_matrix(q.x, q.y, q.z, q.w)
+            self._cart_hold = False
+            self._cart_status = "moving"
+            self._cart_stall = 0
+            self._cart_last_err = None
+        self.get_logger().info(
+            f"cart goal → ({p.x:+.3f}, {p.y:+.3f}, {p.z:+.3f})")
+
+    def _on_cart_track(self, msg: PoseStamped) -> None:
+        """Continuously-tracked target: the arm follows it wherever it moves,
+        never auto-cancelling. Publish this at ~10 Hz from a live object
+        detection to chase the object (including lateral/y moves)."""
+        if self.ik is None or self.n_arm < 6:
+            return
+        import numpy as np
+        p = msg.pose.position
+        q = msg.pose.orientation
+        with self.lock:
+            self._cart_target_pos = np.array([p.x, p.y, p.z], dtype=float)
+            self._cart_target_R = _quat_to_matrix(q.x, q.y, q.z, q.w)
+            self._cart_hold = True
+            if self._cart_status not in ("tracking",):
+                self._cart_status = "tracking"
+            self._cart_stall = 0
+
+    def _on_cart_stop(self, msg: String) -> None:
+        with self.lock:
+            self._cart_cancel("idle")
+
+    def _cart_cancel(self, status: str) -> None:
+        self._cart_target_pos = None
+        self._cart_target_R = None
+        self._cart_hold = False
+        self._cart_status = status
+
+    def _cart_servo_step(self) -> None:
+        """One tick of straight-line Cartesian servoing toward the active
+        goal. Updates goal_rad[:6]. Interpolates the TOOL pose at a capped
+        speed so the path is straight, solving pose IK for each waypoint."""
+        import numpy as np
+        q = np.array(self.goal_rad[:6])
+        p_now, R_now = self.ik.fk_pose(q)
+        dp = self._cart_target_pos - p_now
+        dist = float(np.linalg.norm(dp))
+
+        # rotation error angle
+        R_err = self._cart_target_R @ R_now.T
+        cos_a = max(-1.0, min(1.0, (np.trace(R_err) - 1.0) / 2.0))
+        ang = math.acos(cos_a)
+
+        pos_tol = float(self.get_parameter("cart_pos_tol").value)
+        ang_tol = float(self.get_parameter("cart_ang_tol").value)
+        if dist < pos_tol and ang < ang_tol:
+            if self._cart_hold:
+                # tracking: sit on the target, keep following if it moves
+                self._cart_status = "tracking"
+                return
+            self._cart_cancel("reached")
+            self.get_logger().info("cart goal REACHED")
+            return
+
+        # stall detection: no meaningful progress for N ticks → unreachable.
+        # Skipped while tracking (a moving target legitimately keeps a
+        # non-zero error and we must keep chasing, not give up).
+        if not self._cart_hold:
+            if self._cart_last_err is not None and \
+                    self._cart_last_err - dist < 1e-4 and dist > pos_tol:
+                self._cart_stall += 1
+            else:
+                self._cart_stall = 0
+            self._cart_last_err = dist
+            if self._cart_stall > int(self.get_parameter("cart_stall_iters").value):
+                self._cart_cancel("unreachable")
+                self.get_logger().warn(
+                    f"cart goal UNREACHABLE (stalled {dist*1000:.0f} mm away)")
+                return
+
+        # step-limited intermediate tool pose (straight line)
+        lin_step = float(self.get_parameter("cart_lin_speed").value) * self.dt
+        ang_step = float(self.get_parameter("cart_ang_speed").value) * self.dt
+        if dist > lin_step:
+            p_cmd = p_now + dp * (lin_step / dist)
+        else:
+            p_cmd = self._cart_target_pos
+        if ang > ang_step and ang > 1e-6:
+            frac = ang_step / ang
+            axis = np.array([
+                R_err[2, 1] - R_err[1, 2],
+                R_err[0, 2] - R_err[2, 0],
+                R_err[1, 0] - R_err[0, 1],
+            ]) / (2.0 * math.sin(ang))
+            R_cmd = _rot_from_rotvec(axis * ang * frac) @ R_now
+        else:
+            R_cmd = self._cart_target_R
+
+        q_sol, _ok = self.ik.solve_pose_ik(q, p_cmd, R_cmd)
+        q_clamped = [self._clamp(j, float(q_sol[j])) for j in range(6)]
+
+        # self-collision gate (same as IK jog)
+        if (self.ik_self_collision
+                and self.ik.self_collides(np.array(q_clamped),
+                                          self.ik_collision_radius)):
+            self._cart_cancel("unreachable")
+            self.get_logger().warn("cart goal blocked by self-collision")
+            return
+        for j in range(6):
+            self.goal_rad[j] = q_clamped[j]
+
+    def _publish_cart_feedback(self, positions) -> None:
+        if self.pub_cart_state is None or self.ik is None:
+            return
+        import numpy as np
+        try:
+            p, R = self.ik.fk_pose(np.array(positions[:6]))
+        except Exception:
+            return
+        ps = PoseStamped()
+        ps.header.stamp = self.get_clock().now().to_msg()
+        ps.header.frame_id = str(self.get_parameter("ik_base_link").value)
+        ps.pose.position.x, ps.pose.position.y, ps.pose.position.z = \
+            float(p[0]), float(p[1]), float(p[2])
+        qx, qy, qz, qw = _matrix_to_quat(R)
+        ps.pose.orientation.x = qx
+        ps.pose.orientation.y = qy
+        ps.pose.orientation.z = qz
+        ps.pose.orientation.w = qw
+        self.pub_cart_state.publish(ps)
+        s = String()
+        s.data = self._cart_status
+        self.pub_cart_status.publish(s)
 
     # ---------------- IK mode helpers ----------------
     def _compute_ik_inputs(self, keys: int, axes):
@@ -1168,7 +1492,18 @@ class TeleopNode(Node):
                 if self.last_remote_t
                 else True
             )
-            if not stale and mode == MODE_IK and self.ik is not None and self.n_arm >= 6:
+            cart_active = self._cart_target_pos is not None
+            if cart_active and not stale:
+                # deadman override: any live remote input cancels the
+                # autonomous Cartesian goal so the operator always wins.
+                self._cart_cancel("idle")
+                cart_active = False
+                self.get_logger().warn("cart goal cancelled by remote input")
+
+            if cart_active:
+                # ---- autonomous Cartesian-goal servo (straight line) ----
+                self._cart_servo_step()
+            elif not stale and mode == MODE_IK and self.ik is not None and self.n_arm >= 6:
                 # ---- IK mode: persistent WORLD-frame target, arm tracks it ----
                 import numpy as np
                 lin_vel, ang_vel = self._compute_ik_inputs(keys, axes)
@@ -1179,30 +1514,71 @@ class TeleopNode(Node):
                     self.ik_target_pos = p0.copy()
                     self.ik_target_R = R0.copy()
 
-                # Jog the persistent target in the WORLD frame:
-                #   translation → target_pos += v·dt  (world axes; "Up" is
-                #   always world-z no matter how the gripper is tilted)
-                #   rotation    → target_R = R_delta @ R  (pre-multiply = world
-                #   axes; "pitch" always tips about world-y, in place at EoE)
-                if (abs(lin_vel) > 1e-6).any():
-                    self.ik_target_pos = self.ik_target_pos + lin_vel * self.dt
-                if (abs(ang_vel) > 1e-6).any():
-                    R_delta = _rot_from_rotvec(ang_vel * self.dt)
-                    self.ik_target_R = R_delta @ self.ik_target_R
+                # ---- cmd_vel Cartesian jog with pose-anchor feedback ----
+                # The joystick is a twist command, but we also integrate a
+                # commanded ANCHOR pose and servo on it. This is what makes a
+                # pure rotation pivot exactly ABOUT the EoE: the anchor
+                # position stays put and the feedback continuously cancels
+                # any translation leaked by the damped pseudoinverse or by a
+                # joint hitting its limit. Conversely, translation holds the
+                # current orientation.
+                if bool(self.get_parameter("ik_tool_frame_rotation").value) \
+                        and (np.abs(ang_vel) > 1e-6).any():
+                    ang_vel = self.ik.ee_to_base_angular(q, ang_vel)
 
-                # Clamp the target so it can't lead the reachable EoE by more
-                # than ik_max_lead — keeps it from floating into unreachable
-                # space (which would create a dead zone when you reverse).
-                eoe_pos, _ = self.ik.fk_pose(q)
-                lead = self.ik_target_pos - eoe_pos
+                p_now, R_now = self.ik.fk_pose(q)
+                if self.ik_target_pos is None or self.ik_target_R is None:
+                    self.ik_target_pos = p_now.copy()
+                    self.ik_target_R = R_now.copy()
+
+                # integrate the anchor from the commanded twist
+                self.ik_target_pos = self.ik_target_pos + lin_vel * self.dt
+                if (np.abs(ang_vel) > 1e-6).any():
+                    self.ik_target_R = _rot_from_rotvec(ang_vel * self.dt) \
+                        @ self.ik_target_R
+                # never let the anchor run away from the reachable pose
+                lead = self.ik_target_pos - p_now
                 d = float(np.linalg.norm(lead))
                 if d > self.ik_max_lead:
-                    self.ik_target_pos = eoe_pos + lead * (self.ik_max_lead / d)
+                    self.ik_target_pos = p_now + lead * (self.ik_max_lead / d)
 
-                # Solve 6D pose IK so the arm tracks the target pose.
-                q_sol, _ = self.ik.solve_pose_ik(
-                    q, self.ik_target_pos, self.ik_target_R
-                )
+                # feedback twist = feedforward + P on pose error
+                kp = float(self.get_parameter("ik_pos_gain").value)
+                kr = float(self.get_parameter("ik_rot_gain").value)
+                v = lin_vel + kp * (self.ik_target_pos - p_now)
+                R_err = self.ik_target_R @ R_now.T
+                # log map (rotation vector) of R_err
+                cos_a = max(-1.0, min(1.0, (np.trace(R_err) - 1.0) / 2.0))
+                a = math.acos(cos_a)
+                if a > 1e-6:
+                    axis = np.array([
+                        R_err[2, 1] - R_err[1, 2],
+                        R_err[0, 2] - R_err[2, 0],
+                        R_err[1, 0] - R_err[0, 1],
+                    ]) / (2.0 * math.sin(a))
+                    rot_err = axis * a
+                else:
+                    rot_err = np.zeros(3)
+                # anti-windup: kalau rotasi mentok (arm tak bisa berputar
+                # lebih jauh sambil menahan ujung), jangan biarkan anchor_R
+                # terus berjalan menjauh — tarik mundur ke batas.
+                if a > 0.35:
+                    self.ik_target_R = _rot_from_rotvec(
+                        rot_err * ((a - 0.35) / a) * -1.0) @ self.ik_target_R
+                w = ang_vel + kr * rot_err
+
+                if (np.abs(np.concatenate([v, w])) > 1e-5).any():
+                    # task-priority: posisi EoE tugas utama, rotasi hanya di
+                    # null-space-nya → rotasi TIDAK PERNAH menggeser EoE;
+                    # kalau tak bisa berputar lagi, dia berhenti berputar.
+                    qdot = self.ik.velocity_ik_priority(q, v, w)
+                    qmax = float(self.get_parameter("ik_qdot_max").value)
+                    peak = float(np.max(np.abs(qdot)))
+                    if peak > qmax:      # scale, don't clip → direction kept
+                        qdot = qdot * (qmax / peak)
+                    q_sol = q + qdot * self.dt
+                else:
+                    q_sol = q
                 q_clamped = np.array(
                     [self._clamp(j, float(q_sol[j])) for j in range(6)]
                 )
@@ -1256,6 +1632,7 @@ class TeleopNode(Node):
             m.position = positions
             self.pub_state.publish(m)
             self._publish_ee_marker(positions)
+            self._publish_cart_feedback(positions)
             return
 
         # write goals every tick so motors actively track even without input
@@ -1284,6 +1661,7 @@ class TeleopNode(Node):
         m.position = positions
         self.pub_state.publish(m)
         self._publish_ee_marker(positions)
+        self._publish_cart_feedback(positions)
 
     def _triad_markers(self, ns, xyz, R, length, alpha, now):
         """Build 3 ARROW markers (x=red, y=green, z=blue) for a pose triad."""
@@ -1373,7 +1751,13 @@ class TeleopNode(Node):
                 "disable if needed."
             )
             try:
-                self._set_profile(30, 10)
+                if bool(self.get_parameter("smooth_stream").value):
+                    # arm is on Time-based Profile: units are ms, so leave a
+                    # gentle 400 ms move profile instead of the velocity-based
+                    # "slow" values (30/10 would mean a violent 30 ms snap)
+                    self._set_profile_ids(self._arm_ids(), 400, 150)
+                else:
+                    self._set_profile(30, 10)
             except Exception:
                 pass
         finally:

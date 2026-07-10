@@ -9,7 +9,7 @@ This is the **bottom layer** of the MoveIt stack:
 ```
 om_chain_pick_place        ← state machine (this lives elsewhere)
         ↓ MoveGroup action
-om_chain_moveit_config     ← move_group, planners, RViz config
+open_manipulator_6dof_moveit ← move_group, planners, RViz config
         ↓ /arm_controller/follow_joint_trajectory
 om_chain_bringup           ← ros2_control + dxl_hw_interface     ← (you are here)
         ↓ /dev/ttyUSB0
@@ -166,6 +166,6 @@ our own ros2_control xacro.
 
 ## See also
 
-- [`om_chain_moveit_config`](../om_chain_moveit_config/) — MoveIt 2 layer on top
+- [`open_manipulator_6dof_moveit`](../open_manipulator_friends_ros2/open_manipulator_6dof_moveit/) — MoveIt 2 layer on top
 - [`om_chain_pick_place`](../om_chain_pick_place/) — pick-and-place state machine
 - [`go2w_remote_arm`](../go2w_remote_arm/) — alternative direct-DXL teleop (no ros2_control)

@@ -39,7 +39,7 @@ def generate_launch_description():
         description="Joint velocity in rad/s while a remote button is held.",
     )
     device_arg = DeclareLaunchArgument(
-        "device", default_value="/dev/ttyUSB0",
+        "device", default_value="/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FT5NUUIQ-if00-port0",
         description="Serial device for U2D2.",
     )
 

@@ -31,3 +31,74 @@ waypoints:
 
   place:
     joint: [+0.4, -0.213, 1.758, -2.014, -0.816, 2.083]
+
+  # Search / feedback gestures for the AprilTag demo.
+  # These sweep from the safe home pose toward wider, lower, farther views.
+  # If any pose feels too aggressive on hardware, snapshot a safer pose and
+  # replace the corresponding joint array.
+  search_center:
+    named: home_pose
+
+  search_left:
+    joint: [-0.55, -0.6806, 1.3613, 0.0, 0.8901, 0.0]
+
+  search_right:
+    joint: [0.55, -0.6806, 1.3613, 0.0, 0.8901, 0.0]
+
+  search_high:
+    joint: [0.0, -0.55, 1.25, 0.0, 1.05, 0.0]
+
+  search_low:
+    joint: [0.0, -0.55, 1.45, 0.0, 1.35, 0.0]
+
+  search_lower:
+    joint: [0.0, -0.60, 1.52, 0.0, 1.62, 0.0]
+
+  search_far:
+    joint: [0.0, -0.50, 1.65, 0.0, 1.50, 0.0]
+
+  search_far_left:
+    joint: [-0.75, -0.50, 1.65, 0.0, 1.50, 0.0]
+
+  search_far_right:
+    joint: [0.75, -0.50, 1.65, 0.0, 1.50, 0.0]
+
+  search_far_lower:
+    joint: [0.0, -0.60, 1.52, 0.0, 1.82, 0.0]
+
+  search_far_lower_left:
+    joint: [-0.65, -0.60, 1.52, 0.0, 1.82, 0.0]
+
+  search_far_lower_right:
+    joint: [0.65, -0.60, 1.52, 0.0, 1.82, 0.0]
+
+  search_floor:
+    joint: [0.0, -0.60, 1.52, 0.0, 1.95, 0.0]
+
+  search_floor_left:
+    joint: [-0.55, -0.60, 1.52, 0.0, 1.95, 0.0]
+
+  search_floor_right:
+    joint: [0.55, -0.60, 1.52, 0.0, 1.95, 0.0]
+
+  nod_up:
+    joint: [0.0, -0.62, 1.35, 0.0, 1.05, 0.0]
+
+  nod_down:
+    joint: [0.0, -0.74, 1.45, 0.0, 0.72, 0.0]
+
+  # Small wrist "circle" after a successful run.
+  circle_1:
+    joint: [0.0, -0.6806, 1.3613, 0.25, 0.8901, 0.0]
+
+  circle_2:
+    joint: [0.0, -0.6806, 1.3613, 0.0, 1.05, 0.25]
+
+  circle_3:
+    joint: [0.0, -0.6806, 1.3613, -0.25, 0.8901, 0.0]
+
+  circle_4:
+    joint: [0.0, -0.6806, 1.3613, 0.0, 0.75, -0.25]
+
+  circle_5:
+    named: home_pose

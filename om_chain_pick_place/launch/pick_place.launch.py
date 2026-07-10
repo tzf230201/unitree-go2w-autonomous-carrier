@@ -2,7 +2,7 @@
 
 The MoveIt stack must already be running. Either:
 
-  Terminal 1:   ros2 launch om_chain_moveit_config demo.launch.py
+  Terminal 1:   ros2 launch open_manipulator_6dof_moveit real.launch.py
   Terminal 2:   ros2 launch om_chain_pick_place pick_place.launch.py
 
 …or use the all-in-one launch file inside om_chain_pick_place if you prefer.

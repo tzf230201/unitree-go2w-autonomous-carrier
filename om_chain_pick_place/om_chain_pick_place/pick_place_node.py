@@ -63,7 +63,7 @@ class PickPlaceNode(Node):
         # gripper positions (prismatic, metres). Defaults match SRDF group_states.
         self.declare_parameter("gripper_open_pos", 0.019)
         self.declare_parameter("gripper_close_pos", -0.010)
-        # SRDF path — defaults to the file shipped in om_chain_moveit_config.
+        # SRDF path defaults to the canonical open_manipulator_6dof MoveIt config.
         self.declare_parameter("srdf_file", "")
 
         # ---- waypoints ----
@@ -96,8 +96,8 @@ class PickPlaceNode(Node):
         self.named_poses: Dict[str, Dict[str, float]] = {}
         srdf_path = str(self.get_parameter("srdf_file").value)
         if not srdf_path:
-            # canonical SRDF = the open_manipulator_6dof one (tip at the
-            # gripper). om_chain_moveit_config's SRDF (tip at link7) is legacy.
+            # Canonical SRDF = open_manipulator_6dof, whose planning tip is the
+            # gripper end-effector link.
             try:
                 srdf_path = str(
                     Path(get_package_share_directory("open_manipulator_6dof_moveit"))

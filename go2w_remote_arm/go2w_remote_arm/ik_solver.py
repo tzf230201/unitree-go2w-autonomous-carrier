@@ -202,6 +202,28 @@ class IKSolver:
         J_pinv = J_lin.T @ np.linalg.inv(J_lin @ J_lin.T + lam_sq * np.eye(3))
         return J_pinv @ lin_vel
 
+    def velocity_ik_priority(
+        self, q: np.ndarray, lin_vel: np.ndarray, ang_vel: np.ndarray
+    ) -> np.ndarray:
+        """Task-priority velocity IK: EE POSITION is the primary task,
+        rotation runs in its null space. Guarantees (to first order) that a
+        rotation command can never translate the EoE — if the arm cannot
+        rotate further while holding the tip, rotation simply stalls instead
+        of dragging the tip away. This matches how tip-centred rotation
+        should feel on a non-spherical-wrist arm."""
+        J = self.jacobian(q)
+        J_pos, J_rot = J[:3, :], J[3:, :]
+        lam_sq = float(self.damping) ** 2
+        Jp_pinv = J_pos.T @ np.linalg.inv(
+            J_pos @ J_pos.T + lam_sq * np.eye(3))
+        q_pos = Jp_pinv @ lin_vel
+        N = np.eye(self.n_joints) - Jp_pinv @ J_pos
+        JrN = J_rot @ N
+        JrN_pinv = JrN.T @ np.linalg.inv(
+            JrN @ JrN.T + lam_sq * np.eye(3))
+        q_rot = JrN_pinv @ (ang_vel - J_rot @ q_pos)
+        return q_pos + N @ q_rot
+
     def ee_to_base_angular(self, q: np.ndarray, w_ee: np.ndarray) -> np.ndarray:
         """Rotate an angular velocity vector from EE (tool) frame into the
         base frame so the user feels "roll" = around tool axis, "pitch" = tool

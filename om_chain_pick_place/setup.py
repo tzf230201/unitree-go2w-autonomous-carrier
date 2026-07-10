@@ -25,7 +25,11 @@ setup(
             'pick_place_node = om_chain_pick_place.pick_place_node:main',
             'apriltag_detector = om_chain_pick_place.apriltag_detector:main',
             'tag_pick_place_node = om_chain_pick_place.tag_pick_place_node:main',
+            'qr_follower_node = om_chain_pick_place.qr_follower_node:main',
+            'coordinate_debug_node = om_chain_pick_place.coordinate_debug_node:main',
             'tag_calibrate = om_chain_pick_place.tag_calibrate:main',
+            'calib_gui = om_chain_pick_place.calib_gui:main',
+            'direct_pick_node = om_chain_pick_place.direct_pick_node:main',
         ],
     },
 )

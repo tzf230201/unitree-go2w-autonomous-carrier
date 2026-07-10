@@ -68,8 +68,12 @@ class AprilTagDetector(Node):
         # camera firmware, so we always set it explicitly here.
         self.declare_parameter("exposure", 0)
         self.declare_parameter("publish_debug", True)
+        self.declare_parameter("terminal_log_period", 0.0)
         # show a local OpenCV window with the annotated video (needs DISPLAY)
         self.declare_parameter("show_window", False)
+        self.declare_parameter("window_name", "AprilTag Detector")
+        self.declare_parameter("window_width", 960)
+        self.declare_parameter("window_height", 720)
         self.declare_parameter("camera_frame", "camera_color_optical_frame")
 
         family = str(self.get_parameter("tag_family").value)
@@ -79,7 +83,11 @@ class AprilTagDetector(Node):
         self.tag_id = int(self.get_parameter("tag_id").value)
         self.use_depth = bool(self.get_parameter("use_depth").value)
         self.publish_debug = bool(self.get_parameter("publish_debug").value)
+        self.terminal_log_period = float(self.get_parameter("terminal_log_period").value)
         self.show_window = bool(self.get_parameter("show_window").value)
+        self.window_name = str(self.get_parameter("window_name").value)
+        self.window_width = int(self.get_parameter("window_width").value)
+        self.window_height = int(self.get_parameter("window_height").value)
         self.camera_frame = str(self.get_parameter("camera_frame").value)
 
         # ---- aruco detector (OpenCV 4.5 API) ----
@@ -94,6 +102,30 @@ class AprilTagDetector(Node):
         if refine not in refine_modes:
             raise RuntimeError(f"corner_refine must be one of {list(refine_modes)}")
         self._params.cornerRefinementMethod = refine_modes[refine]
+        # --- robustness tuning (defaults are strict; these help blurred /
+        # oblique / unevenly-lit tags, common with a moving wrist camera) ---
+        # more threshold scales → tolerate uneven lighting + varying tag size
+        self._params.adaptiveThreshWinSizeMin = 3
+        self._params.adaptiveThreshWinSizeMax = 53
+        self._params.adaptiveThreshWinSizeStep = 10
+        # accept slightly rounded/blurred quads (motion blur)
+        self._params.polygonalApproxAccuracyRate = 0.05
+        # sample marker bits more densely + ignore wider cell margins →
+        # decodes tags seen at an angle much more reliably
+        self._params.perspectiveRemovePixelPerCell = 8
+        self._params.perspectiveRemoveIgnoredMarginPerCell = 0.25
+        # allow more bit errors before rejecting (36h11 has strong ECC)
+        self._params.errorCorrectionRate = 0.8
+        self._params.minMarkerPerimeterRate = 0.02
+        # also accept colour-INVERTED tags (white border on dark background).
+        # The user's cube tag is printed as a negative — without this flag it
+        # never decodes even when razor sharp (root cause found 2026-07-09).
+        self._params.detectInvertedMarker = True
+        # retry a missed frame with CLAHE contrast enhancement (only costs
+        # time when nothing was found, so tracking stays fast)
+        self.declare_parameter("clahe_retry", True)
+        self._clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8)) \
+            if bool(self.get_parameter("clahe_retry").value) else None
         s = self.tag_size / 2.0
         # corner order returned by detectMarkers: TL, TR, BR, BL
         self._obj_pts = np.array(
@@ -110,23 +142,71 @@ class AprilTagDetector(Node):
         w = int(self.get_parameter("width").value)
         h = int(self.get_parameter("height").value)
         fps = int(self.get_parameter("fps").value)
-        cfg.enable_stream(rs.stream.color, w, h, rs.format.bgr8, fps)
-        if self.use_depth:
-            dw = int(self.get_parameter("depth_width").value)
-            dh = int(self.get_parameter("depth_height").value)
-            cfg.enable_stream(rs.stream.depth, dw, dh, rs.format.z16, fps)
-        profile = self._pipeline.start(cfg)
+        dw = int(self.get_parameter("depth_width").value)
+        dh = int(self.get_parameter("depth_height").value)
+
+        # Try the requested profile, then progressively USB2-safe fallbacks.
+        # The D405 negotiates USB2.1 on some ports/cables, where 1280x720 tops
+        # out at 15 fps (colour) / 5 fps (depth) — a 30 fps request fails with
+        # "Couldn't resolve requests". Rather than crash, step down.
+        attempts = [(w, h, fps, self.use_depth, dw, dh)]
+        attempts += [
+            (w, h, 15, self.use_depth, 640, 480),   # USB2 720p colour @ 15
+            (848, 480, 30, self.use_depth, 640, 480),
+            (640, 480, 30, self.use_depth, 640, 480),
+            (w, h, 15, False, 0, 0),                 # colour only, no depth
+            (640, 480, 30, False, 0, 0),
+        ]
+        profile = None
+        last_err = None
+        for (cw, ch, cfps, dep, cdw, cdh) in attempts:
+            cfg = rs.config()
+            if serial:
+                cfg.enable_device(serial)
+            cfg.enable_stream(rs.stream.color, cw, ch, rs.format.bgr8, cfps)
+            if dep:
+                cfg.enable_stream(rs.stream.depth, cdw, cdh, rs.format.z16, cfps)
+            try:
+                self._pipeline = rs.pipeline()
+                profile = self._pipeline.start(cfg)
+                self.use_depth = dep
+                w, h, fps = cw, ch, cfps
+                if (cw, ch, cfps, dep) != (
+                        int(self.get_parameter("width").value),
+                        int(self.get_parameter("height").value),
+                        int(self.get_parameter("fps").value),
+                        bool(self.get_parameter("use_depth").value)):
+                    self.get_logger().warn(
+                        f"requested profile unavailable — using {cw}x{ch}@{cfps}"
+                        f"{' +depth' if dep else ' (no depth)'} "
+                        "(likely USB2.1 — check cable/port for full speed)")
+                break
+            except RuntimeError as exc:
+                last_err = exc
+                continue
+        if profile is None:
+            raise RuntimeError(f"no RealSense profile worked: {last_err}")
         self._align = rs.align(rs.stream.color) if self.use_depth else None
 
         exposure = int(self.get_parameter("exposure").value)
-        for sensor in profile.get_device().query_sensors():
-            if sensor.supports(rs.option.enable_auto_exposure) and \
-                    sensor.get_info(rs.camera_info.name) == "RGB Camera":
-                if exposure > 0:
-                    sensor.set_option(rs.option.enable_auto_exposure, 0)
-                    sensor.set_option(rs.option.exposure, exposure)
-                else:
-                    sensor.set_option(rs.option.enable_auto_exposure, 1)
+        # D435i exposes color on a dedicated "RGB Camera" sensor; the D405's
+        # color comes from the "Stereo Module" itself. Prefer the RGB sensor
+        # when present, otherwise fall back to whatever supports exposure.
+        sensors = [
+            s for s in profile.get_device().query_sensors()
+            if s.supports(rs.option.enable_auto_exposure)
+        ]
+        rgb = [s for s in sensors
+               if s.get_info(rs.camera_info.name) == "RGB Camera"]
+        for sensor in (rgb if rgb else sensors):
+            if exposure > 0:
+                sensor.set_option(rs.option.enable_auto_exposure, 0)
+                sensor.set_option(rs.option.exposure, exposure)
+            else:
+                sensor.set_option(rs.option.enable_auto_exposure, 1)
+            self.get_logger().info(
+                f"exposure {'manual ' + str(exposure) if exposure > 0 else 'auto'}"
+                f" on sensor '{sensor.get_info(rs.camera_info.name)}'")
 
         intr = (
             profile.get_stream(rs.stream.color)
@@ -142,6 +222,9 @@ class AprilTagDetector(Node):
             f"RealSense up: {w}x{h}@{fps} fx={intr.fx:.1f} fy={intr.fy:.1f} "
             f"family={family} tag_size={self.tag_size} m"
         )
+        if self.show_window:
+            cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
+            cv2.resizeWindow(self.window_name, self.window_width, self.window_height)
 
         # ---- publishers ----
         self._pose_pub = self.create_publisher(PoseStamped, "/apriltag/pose", 10)
@@ -161,6 +244,7 @@ class AprilTagDetector(Node):
         import time as _time
         no_tag_count = 0
         fps_t0 = _time.monotonic()
+        status_log_t0 = 0.0
         fps_frames = 0
         fps = 0.0
         detect_ms = 0.0
@@ -183,26 +267,48 @@ class AprilTagDetector(Node):
             corners, ids, _ = cv2.aruco.detectMarkers(
                 gray, self._dict, parameters=self._params
             )
+            if (ids is None or len(ids) == 0) and self._clahe is not None:
+                # second chance on low-contrast / washed-out frames
+                corners, ids, _ = cv2.aruco.detectMarkers(
+                    self._clahe.apply(gray), self._dict,
+                    parameters=self._params,
+                )
+            visible_ids = [] if ids is None else [int(i) for i in ids.flatten()]
             best = self._pick_tag(corners, ids, depth)
             detect_ms = 0.9 * detect_ms + 0.1 * (_time.monotonic() - t_det) * 1e3
 
             if best is not None:
-                tag_corners, tvec, rvec = best
+                best_id, tag_corners, tvec, rvec = best
                 self._publish_pose(tvec, rvec)
                 no_tag_count = 0
             else:
                 no_tag_count += 1
-                if no_tag_count % 90 == 1:   # ~every 3 s at 30 fps
-                    self.get_logger().info("no AprilTag in view")
+                status_now = _time.monotonic()
+                if (
+                    self.terminal_log_period > 0.0
+                    and status_now - status_log_t0 >= self.terminal_log_period
+                ):
+                    status_log_t0 = status_now
+                    if visible_ids and self.tag_id >= 0 and self.tag_id not in visible_ids:
+                        self.get_logger().info(
+                            f"visible AprilTag IDs {visible_ids}, waiting for ID {self.tag_id}"
+                        )
+                    elif visible_ids:
+                        self.get_logger().info(
+                            f"visible AprilTag IDs {visible_ids}, but no usable pose"
+                        )
+                    else:
+                        self.get_logger().info("no AprilTag in view")
 
             # ---- fps bookkeeping (end-to-end loop rate) ----
             fps_frames += 1
             now = _time.monotonic()
             if now - fps_t0 >= 5.0:
                 fps = fps_frames / (now - fps_t0)
-                self.get_logger().info(
-                    f"pipeline {fps:.1f} fps, detect {detect_ms:.0f} ms/frame"
-                )
+                if self.terminal_log_period > 0.0:
+                    self.get_logger().info(
+                        f"pipeline {fps:.1f} fps, detect {detect_ms:.0f} ms/frame"
+                    )
                 fps_t0, fps_frames = now, 0
 
             if self._img_pub is not None or self.show_window:
@@ -212,34 +318,57 @@ class AprilTagDetector(Node):
                     if best is not None:
                         cv2.drawFrameAxes(
                             dbg, self._K, self._D,
-                            best[2], best[1], self.tag_size * 0.75,
+                            best[3], best[2], self.tag_size * 0.75,
                         )
                 if best is not None:
-                    tv = best[1]
-                    status = (f"TAG  x={tv[0]:+.3f} y={tv[1]:+.3f} "
+                    best_id, _, tv, _ = best
+                    status = (f"TAG id={best_id}  x={tv[0]:+.3f} y={tv[1]:+.3f} "
                               f"z={tv[2]:+.3f} m")
                     color_txt = (0, 220, 0)
                 else:
-                    status = "no tag"
+                    if visible_ids and self.tag_id >= 0 and self.tag_id not in visible_ids:
+                        status = f"seen ids {visible_ids}, waiting id {self.tag_id}"
+                    elif visible_ids:
+                        status = f"seen ids {visible_ids}, no usable pose"
+                    else:
+                        status = "no tag"
                     color_txt = (0, 0, 255)
-                cv2.putText(dbg, f"{fps:.1f} fps  det {detect_ms:.0f} ms",
-                            (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8,
-                            (255, 255, 0), 2)
-                cv2.putText(dbg, status, (10, 62),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, color_txt, 2)
+                self._draw_status_panel(dbg, fps, detect_ms, status, color_txt,
+                                        visible_ids)
                 if self._img_pub is not None:
                     msg = self._bridge.cv2_to_imgmsg(dbg, encoding="bgr8")
                     msg.header.stamp = self.get_clock().now().to_msg()
                     msg.header.frame_id = self.camera_frame
                     self._img_pub.publish(msg)
                 if self.show_window:
-                    cv2.imshow("apriltag_detector", dbg)
+                    cv2.imshow(self.window_name, dbg)
                     cv2.waitKey(1)
         if self.show_window:
             cv2.destroyAllWindows()
 
+    def _draw_status_panel(self, img, fps, detect_ms, status, color_txt, visible_ids):
+        h, w = img.shape[:2]
+        panel_h = 92
+        overlay = img.copy()
+        cv2.rectangle(overlay, (0, 0), (w, panel_h), (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.62, img, 0.38, 0, img)
+        cv2.rectangle(img, (0, 0), (w, panel_h), color_txt, 3)
+
+        target = "any" if self.tag_id < 0 else str(self.tag_id)
+        seen = "-" if not visible_ids else ",".join(str(i) for i in visible_ids)
+        line1 = (
+            f"AprilTag {target} | seen: {seen} | {fps:.1f} fps | "
+            f"detect {detect_ms:.0f} ms"
+        )
+        line2 = f"{status} | size {self.tag_size * 1000:.0f} mm | {self.camera_frame}"
+
+        cv2.putText(img, line1, (18, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.82,
+                    (255, 255, 255), 2, cv2.LINE_AA)
+        cv2.putText(img, line2, (18, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.74,
+                    color_txt, 2, cv2.LINE_AA)
+
     def _pick_tag(self, corners, ids, depth):
-        """Return (corners, tvec, rvec) for the requested/nearest tag."""
+        """Return (tag_id, corners, tvec, rvec) for the requested/nearest tag."""
         if ids is None or len(ids) == 0:
             return None
         candidates = []
@@ -257,11 +386,11 @@ class AprilTagDetector(Node):
                 refined = self._depth_refine(c.reshape(4, 2), depth)
                 if refined is not None:
                     tvec = refined
-            candidates.append((float(np.linalg.norm(tvec)), c, tvec, rvec))
+            candidates.append((float(np.linalg.norm(tvec)), int(i), c, tvec, rvec))
         if not candidates:
             return None
-        _, c, tvec, rvec = min(candidates, key=lambda t: t[0])
-        return c, tvec, rvec
+        _, tag_id, c, tvec, rvec = min(candidates, key=lambda t: t[0])
+        return tag_id, c, tvec, rvec
 
     def _depth_refine(self, corners: np.ndarray, depth) -> Optional[np.ndarray]:
         """Deproject the tag-center pixel using the aligned depth frame."""

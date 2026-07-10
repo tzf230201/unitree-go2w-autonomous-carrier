@@ -142,6 +142,27 @@ def restart_self(delay: float = 0.6) -> None:
     threading.Thread(target=_do, daemon=True).start()
 
 
+def shutdown_self(cam=None, delay: float = 0.6) -> None:
+    """Cleanly stop the web monitor and STAY stopped — releases the RealSense
+    camera (so the AprilTag detector can use it) and exits with code 0.
+    systemd's Restart=on-failure does NOT restart a clean exit, so the monitor
+    stays down until manually started again. Delayed in a background thread so
+    the HTTP response is flushed first."""
+    def _do() -> None:
+        time.sleep(delay)
+        # release the camera first
+        try:
+            if cam is not None:
+                cam.running = False
+                th = getattr(cam, "_thread", None)
+                if th is not None:
+                    th.join(timeout=2.0)
+        except Exception:
+            pass
+        os._exit(0)   # clean exit → systemd on-failure will NOT restart
+    threading.Thread(target=_do, daemon=True).start()
+
+
 def kill_node(name: str) -> str:
     """Kill the process(es) hosting `name`. SIGINT first (clean rclpy shutdown),
     escalate to SIGTERM after a grace period. Returns a human-readable result."""
@@ -1147,6 +1168,10 @@ def render_page(node: MonitorNode, cam: CameraManager) -> str:
       onsubmit="return confirm('Restart the web monitor service? The page will reconnect in a few seconds.')">
   <button class="stop" type="submit">♻ Restart service</button>
 </form>
+<form class="inline" method="POST" action="/shutdown"
+      onsubmit="return confirm('Matikan web monitor & lepas kamera? Monitor TIDAK akan hidup lagi sampai dijalankan manual (systemctl start).')">
+  <button class="kill" type="submit">🛑 Kill (lepas kamera)</button>
+</form>
 </div></header>
 <main>
 <p class="small">Battery/temperature status refreshes automatically every 3 s.
@@ -1291,6 +1316,27 @@ def make_handler(node: MonitorNode, cam: CameraManager):
                 except Exception:
                     pass
                 restart_self()
+                return
+            if self.path == "/shutdown":
+                node.get_logger().info(
+                    "Shutdown requested from web — releasing camera & exiting.")
+                body = (
+                    "<!doctype html><meta charset='utf-8'>"
+                    "<title>Shutting down…</title>"
+                    "<body style='font-family:system-ui;background:#12141a;"
+                    "color:#e6e6e6;padding:40px;text-align:center'>"
+                    "<h2>🛑 Web monitor dimatikan</h2>"
+                    "<p>Kamera dilepas. Monitor tidak akan hidup lagi sampai "
+                    "dijalankan manual:</p>"
+                    "<pre style='color:#7ea1ff'>sudo systemctl start "
+                    "go2w-web-monitor.service</pre></body>"
+                )
+                self._send_html(body)
+                try:
+                    self.wfile.flush()
+                except Exception:
+                    pass
+                shutdown_self(cam)
                 return
             if self.path == "/preload_llm":
                 try:

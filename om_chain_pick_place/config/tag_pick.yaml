@@ -1,5 +1,10 @@
 # AprilTag pick-and-place (level-1 PoC) — parameters for both nodes.
 #
+# Target object: 30 x 30 x 30 mm cube. A 36h11 AprilTag ID 1, printed at
+# 30 x 30 mm, is attached to one cube face. The picker estimates the cube
+# centre as 15 mm behind the tag plane:
+#   object_center_from_tag: [0.00000, 0.00000, -0.01500]
+#
 # ⚠ camera_xyz / camera_rpy MUST be measured for your actual camera mount:
 #   pose of the camera BODY frame (x out of the lens, y left, z up) relative
 #   to the arm base (`world`, the bottom of link1). Verify with:
@@ -8,49 +13,204 @@
 
 apriltag_detector:
   ros__parameters:
-    width: 1280             # camera is on USB2: 1280x720 color max 15 fps
-    height: 720
-    fps: 15
-    depth_width: 640        # USB2 can't stream 1280x720 depth
-    depth_height: 480
+    width: 1280             # D405 on USB 3.2 does 1280x720 @ 30 fps —
+    height: 720             # more pixels on the tag = detection robust at
+    fps: 30                 # distance and at oblique angles.
+    depth_width: 1280
+    depth_height: 720
+    serial: "427622271962"  # ALOHA wrist cam: RealSense D405 (USB 3.2)
     tag_family: "36h11"
-    tag_size: 0.03          # metres, outer black edge — 30 mm tag on the
-                            # 30 mm cube. Must match the printout exactly!
-    tag_id: -1              # -1 = nearest tag of any ID
+    tag_size: 0.03          # metres, outer black edge. Must match printout.
+    tag_id: 1               # detect only the cube's AprilTag ID 1
     corner_refine: "subpix" # ~25 ms/frame → full 15 fps on the Orin.
                             # "apriltag" is more robust for tiny/blurry tags
                             # but ~195 ms/frame → only ~5 fps. If the pose
                             # gets jittery, switch back to "apriltag".
     use_depth: true
     publish_debug: true
-    exposure: 80            # fixed manual exposure; 0 = auto. Auto blows out
-                            # the glossy tag print under ceiling lights here —
-                            # 40–150 all detected reliably (tested 2026-07-06).
+    terminal_log_period: 0.0
+    show_window: true
+    window_name: "OM Chain AprilTag"
+    window_width: 960
+    window_height: 720
+    exposure: 0             # 0 = auto. The D405 handled the tag fine on auto
+                            # (the old manual 80 was tuned for the D435i and —
+                            # due to a sensor-name bug — never actually applied
+                            # to the D405). Set >0 only if glare comes back.
 
 tag_pick_place:
   ros__parameters:
-    # --- camera extrinsic (MEASURE THIS) ---
-    camera_xyz: [0.25, 0.0, 0.30]     # m, camera position in world
-    camera_rpy: [0.0, 0.6, 3.1416]    # rad; example: pitched down ~34°,
-                                      # yawed 180° (looking back at the arm)
+    # --- camera extrinsic ---
+    # Same model as open_manipulator_6dof_application:
+    # camera body frame is mounted on the wrist/end effector, not fixed in world.
+    camera_parent_frame: "end_effector_link"
+    # ALOHA wrist-cam extrinsic (RealSense D405 in the ALOHA mount), converted
+    # from google-deepmind/mujoco_menagerie `aloha`: gripper_base -> wrist_cam
+    # pos=(0, -0.08247, -0.00960), euler_x=2.70526 rad — camera hangs 8.2 cm
+    # to the side of the gripper axis and looks 25 deg inward at the fingers.
+    # NOTE: vx300s gripper_base origin != our end_effector_link origin, so
+    # fine-tune xyz with the calib GUI (port 8081) after this starting point.
+    camera_xyz: [-0.08247, 0.00000, -0.00960]  # m, parent -> camera body
+    camera_rpy: [0.00000, -1.13450, 0.00000]   # rad, parent -> camera body
 
     # --- grasp generation ---
-    approach_offset: 0.10   # hover height above the tag (m)
-    grasp_offset: -0.015    # EE height relative to the tag at grasp (m).
-                            # Tag sits ON TOP of the 30 mm cube, so aim the
-                            # EE at the cube's middle: 15 mm below the tag.
-                            # TUNE on hardware (depends on where
-                            # end_effector_link sits vs the fingertips).
-    grasp_pitch: 3.1416     # pi = gripper straight down
+    cube_size: 0.03         # 30 mm cube
+    object_center_from_tag: [0.00000, 0.00000, -0.01500]
+                            # vector from tag centre to cube centre in the
+                            # tag frame. With the printed face visible, +Z
+                            # points out of the paper, so the cube centre is
+                            # 15 mm behind the tag plane. If /tag_world shows
+                            # the centre on the wrong side, flip the sign.
+    approach_offset: 0.15   # hover height above the cube centre (m)
+    grasp_offset: -0.030    # EE height relative to cube centre at grasp (m).
+                            # TUNE on hardware because end_effector_link is
+                            # not exactly the same point as the fingertips.
+    # --- FRONT pick (default): approach horizontally from the front,
+    # refine with the wrist camera, then advance and grasp. IK map
+    # 2026-07-09: frontal pitch pi/2 roll 0 feasible at object height ~0.20 m
+    # (r 0.14-0.30); lower objects need r~0.30 or nose-down pitch fallback.
+    pick_mode: "front"          # "front" | "top"
+    front_standoff: 0.10        # berhenti 10 cm di depan objek
+    front_approach_z_offset: 0.04  # naikkan approach/standoff 4 cm dari z objek
+    front_grasp_back: 0.005     # EE berhenti 5 mm sebelum pusat kubus
+    front_pitch: 1.5708         # pi/2 = gripper horizontal
+    front_pitch_fallbacks: [1.5708, 1.72, 1.87, 2.0]
+    front_refine_max_iters: 4
+    front_refine_tolerance: 0.008   # selesai bila koreksi < 8 mm
+    front_refine_pos_tol: 0.006     # toleransi MoveIt saat refine/advance
+    front_refine_settle: 0.6        # detik tunggu deteksi segar tiap iterasi
+
+    # --- TOP pick (pick_mode: "top") ---
+    # IK feasibility map (measured 2026-07-08, /compute_ik sweeps at the real
+    # object bearing):
+    #   * top-down (pi) IS feasible, but ONLY low: z <= ~0.06 m, r 0.08-0.20
+    #   * at hover height (z ~0.12-0.16) only tilted pitch 2.1-2.4 works
+    # So: HOVER tilted (approach_pitch), DESCEND+GRASP top-down (grasp_pitch).
+    approach_pitch: 2.4     # ~137 deg tilted hover
+    approach_pitch_fallbacks: [2.4, 2.2, 2.6, 2.0, 1.8]
+    grasp_pitch: 3.1416     # pi = grasp straight down (feasible at low z)
+    grasp_pitch_fallbacks: [3.1416, 2.9, 2.7, 2.4]
+    approach_extra_heights: [0.0, -0.04, 0.04]
+    approach_orientation_tolerance: 0.9
+    grasp_orientation_tolerance: 0.7
     yaw_offset: 0.0         # added to the radial yaw
-    min_z: 0.015            # never command the EE below this (m)
+    min_z: 0.002            # never command the EE below this (m)
     min_samples: 5
     max_sample_age: 1.5
+    stabilize_before_pick: true
+    stabilize_timeout: 4.0
+    stabilize_duration: 0.8
+    stabilize_required_samples: 10
+    stabilize_position_tolerance: 0.02
+
+    # --- search / feedback gestures ---
+    search_enabled: true
+    search_timeout: 32.0
+    search_hold_sec: 0.9
+    search_waypoints:
+      - search_center
+      - search_left
+      - search_right
+      - search_high
+      - search_low
+      - search_lower
+      - search_far
+      - search_far_left
+      - search_far_right
+      - search_far_lower
+      - search_far_lower_left
+      - search_far_lower_right
+      - search_floor
+      - search_floor_left
+      - search_floor_right
+      - search_center
+    not_found_nod_enabled: true
+    not_found_nod_waypoints:
+      - nod_down
+      - nod_up
+      - nod_down
+      - nod_up
+      - search_center
+    success_circle_enabled: true
+    success_circle_waypoints:
+      - circle_1
+      - circle_2
+      - circle_3
+      - circle_4
+      - circle_5
 
     # --- motion / gripper ---
     vel_scale: 0.2
     acc_scale: 0.2
-    planning_time: 10.0
+    position_tolerance: 0.03
+    orientation_tolerance: 0.5
+    planning_time: 4.0      # shorter per-candidate budget → the pitch/height
+                            # fallback chain cycles quickly instead of
+                            # spending 10 s on each infeasible orientation
     planning_attempts: 20
     gripper_open_pos: 0.019
     gripper_close_pos: -0.010
+    auto_run: false         # true = start after launch, like pressing START
+    auto_run_delay: 8.0
+
+    # --- application-like sequence start ---
+    prepare_before_search: true
+    prepare_waypoint: start_pose
+    open_gripper_before_search: true
+
+coord_debug:
+  ros__parameters:
+    tag_topic: "/apriltag/pose"
+    enable_robot_debug: true
+    joint_state_topic: "/joint_states"
+    reference_frame: "world"
+    ee_link: "end_effector_link"
+    camera_parent_frame: "end_effector_link"
+    arm_joint_names: ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
+    gripper_joint_names: ["gripper", "gripper_sub"]
+    camera_xyz: [-0.08247, 0.00000, -0.00960]
+    camera_rpy: [0.00000, -1.13450, 0.00000]
+    cube_size: 0.03
+    object_center_from_tag: [0.00000, 0.00000, -0.01500]
+    log_period: 0.5
+    live_console: true
+    marker_period: 0.2
+    max_tag_age: 2.0
+
+# --- Direct (no-MoveIt) pick flow: sequencer + web GUI share the same
+# camera extrinsic as above. calib_gui's SAVE rewrites every camera_xyz/
+# camera_rpy/object_center_from_tag line in this file, so all sections
+# stay in sync.
+direct_pick:
+  ros__parameters:
+    camera_xyz: [-0.08247, 0.00000, -0.00960]
+    camera_rpy: [0.00000, -1.13450, 0.00000]
+    object_center_from_tag: [0.00000, 0.00000, -0.01500]
+    tag_topic: "/apriltag/pose"
+    arm_joint_names: ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
+    front_standoff: 0.05        # maju ~5 cm (dulu 10 cm)
+    front_approach_z_offset: 0.04
+    front_grasp_back: 0.005
+    approach_offset: [0.10000, 0.10000]   # [standoff(depan), naik(atas)] titik hover
+    pick_offset: [0.07000, 0.00000]     # [maju(+dalam), naik(+atas)] koreksi genggam
+    front_pitch: 1.5708
+    lift_after_grasp: 0.05
+    min_z: 0.01
+    ready_pose: [0.0, -0.6806, 1.3613, 0.0, 0.8901, 0.0]
+    place_pose: [1.2, -0.5, 1.2, 0.0, 0.9, 0.0]
+    gripper_open: -1.0
+    gripper_close: 0.0
+    gripper_settle_s: 1.2
+    joint_move_duration: 4.0    # min-jerk quintic; ready/origin/place in 4 s
+    joint_move_rate: 50.0
+
+calib_gui:
+  ros__parameters:
+    port: 8081
+    camera_parent_frame: "end_effector_link"
+    camera_xyz: [-0.08247, 0.00000, -0.00960]
+    camera_rpy: [0.00000, -1.13450, 0.00000]
+    object_center_from_tag: [0.00000, 0.00000, -0.01500]
+    approach_offset: [0.10000, 0.10000]
+    pick_offset: [0.07000, 0.00000]
+    arm_joint_names: ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]

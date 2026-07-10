@@ -20,7 +20,7 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
     port_arg = DeclareLaunchArgument(
-        "port_name", default_value="/dev/ttyUSB0",
+        "port_name", default_value="/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FT5NUUIQ-if00-port0",
         description="U2D2 serial device.",
     )
     baud_arg = DeclareLaunchArgument(

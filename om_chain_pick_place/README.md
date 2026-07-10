@@ -1,7 +1,7 @@
 # om_chain_pick_place
 
 Pick-and-place state machine for the 6-DOF OpenManipulator Chain. Sits on top
-of [`om_chain_moveit_config`](../om_chain_moveit_config/) (MoveIt 2) and
+of [`open_manipulator_6dof_moveit`](../open_manipulator_friends_ros2/open_manipulator_6dof_moveit/) (MoveIt 2) and
 [`om_chain_bringup`](../om_chain_bringup/) (ros2_control + Dynamixels), and
 drives a configurable waypoint sequence through the `MoveGroup` action.
 
@@ -10,7 +10,7 @@ The full stack:
 ```
 om_chain_pick_place        ← this package (state machine, waypoints YAML)
         ↓ MoveGroup action  +  /gripper_controller/gripper_cmd action
-om_chain_moveit_config     ← move_group: OMPL planning, KDL IK, collision check
+open_manipulator_6dof_moveit ← move_group: OMPL planning, KDL IK, collision check
         ↓ /arm_controller/follow_joint_trajectory  +  /gripper_controller/gripper_cmd
 om_chain_bringup           ← ros2_control + dxl_hw_interface
         ↓ /dev/ttyUSB0
@@ -115,7 +115,7 @@ colcon build --packages-select om_chain_pick_place --symlink-install
 source install/setup.bash
 ```
 
-`ament_python` package; depends on `om_chain_bringup`, `om_chain_moveit_config`,
+`ament_python` package; depends on `om_chain_bringup`, `open_manipulator_6dof_moveit`,
 `rclpy`, `moveit_msgs`, `control_msgs`, `std_srvs`, `sensor_msgs`, `geometry_msgs`.
 
 ---
@@ -127,7 +127,7 @@ You need the full MoveIt stack up first. Two terminals:
 ```bash
 # Terminal 1 — hardware + move_group + RViz
 sudo systemctl stop go2w-arm-launcher.service     # release /dev/ttyUSB0
-ros2 launch om_chain_moveit_config demo.launch.py
+ros2 launch open_manipulator_6dof_moveit real.launch.py
 # Wait for "You can start planning now!"
 ```
 
@@ -166,7 +166,7 @@ node starts.
 | Param | Default | Notes |
 |---|---|---|
 | `waypoints_file`     | `<share>/config/waypoints.yaml`           | Path to the YAML |
-| `srdf_file`          | auto (om_chain_moveit_config share dir)  | Used to resolve `named:` waypoints client-side |
+| `srdf_file`          | auto (open_manipulator_6dof_moveit share dir) | Used to resolve `named:` waypoints client-side |
 | `auto_run`           | `true`                                    | Run once at startup (uses a 2-second timer) |
 | `arm_group`          | `arm`                                     | SRDF planning group |
 | `gripper_group`      | `gripper`                                 | SRDF planning group for the gripper |
@@ -219,7 +219,7 @@ ros2 launch om_chain_pick_place pick_place.launch.py \
 1. **Power-on, launch MoveIt:**
    ```bash
    sudo systemctl stop go2w-arm-launcher.service
-   ros2 launch om_chain_moveit_config demo.launch.py
+   ros2 launch open_manipulator_6dof_moveit real.launch.py
    ```
 
 2. **Launch this node with `auto_run:=false`** so it just waits:
@@ -279,21 +279,18 @@ stays waypoint-based:
   radial yaw), then runs the same 11-step sequence.
 
 Config: [`config/tag_pick.yaml`](config/tag_pick.yaml). Target object is a
-30 mm cube with the tag on its top face. A printable tag (36h11, id 0,
-30 mm) lives at `~/ros2_ws/apriltag36h11_id0_30mm.png` — print at 100 %
-scale and check the black square is exactly 30 mm. `grasp_offset` is
-negative (−15 mm): the tag is on top of the cube, the grasp target is the
-cube's middle.
+30 mm cube with AprilTag 36h11 ID 1 on one side face. A printable tag
+(36h11, id 1, 30 mm) lives at
+`~/ros2_ws/apriltag36h11_id1_30mm.png` — print at 100 % scale and check the
+black square is exactly 30 mm. `object_center_from_tag` is `[0, 0, -0.015]`:
+the cube centre is 15 mm behind the visible tag plane.
 
 ```bash
 # camera is normally held by the web dashboard — release it first
 sudo systemctl stop go2w-web-monitor.service
 sudo systemctl stop go2w-arm-launcher.service     # release /dev/ttyUSB0
 
-# Terminal 1 — MoveIt stack
-ros2 launch om_chain_moveit_config demo.launch.py
-
-# Terminal 2 — detector + tag picker
+# All-in-one: MoveIt stack + RViz + detector + tag picker + image viewer
 ros2 launch om_chain_pick_place tag_pick_place.launch.py
 
 # 1. verify the extrinsic: put the tag at a spot you can measure
@@ -302,6 +299,28 @@ ros2 service call /tag_world std_srvs/srv/Trigger
 #    the ruler, then run:
 ros2 service call /run_tag_pick std_srvs/srv/Trigger
 ```
+
+For read-only manual coordinate debugging, leave the arm control sequence off
+and only read the detector, `/joint_states`, and TF:
+
+```bash
+ros2 launch om_chain_pick_place tag_pick_place.launch.py start_picker:=false
+
+# Full report: joints, EE world pose, tag/object world pose, and object-EE delta.
+ros2 service call /coord_debug_snapshot std_srvs/srv/Trigger
+
+# YAML-ready joint waypoint from the current manual arm pose.
+ros2 service call /coord_debug_waypoint std_srvs/srv/Trigger
+```
+
+The launch shows the detector's OpenCV debug window by default; `rqt_image_view`
+is optional with `start_image_viewer:=true`. RViz subscribes to `/tag_markers`
+and `/coord_debug_markers`: the coordinate debugger shows the estimated tag,
+cube centre, end effector, and the line from gripper to object. If the tag is
+not visible when `/run_tag_pick` is called, the arm sweeps through the
+configured `search_waypoints`; if it still cannot see the tag, it performs a
+small nod gesture and aborts. After a successful pick-and-place it runs a small
+wrist-circle gesture.
 
 If a Cartesian step fails with error code `99999`, the tag is probably
 outside the dexterous workspace for a straight-down grasp — try a tilted
@@ -324,6 +343,6 @@ approach (`grasp_pitch: 2.4` ≈ 45°) or move the tag closer to the arm.
 ## See also
 
 - [`om_chain_bringup`](../om_chain_bringup/) — hardware bringup
-- [`om_chain_moveit_config`](../om_chain_moveit_config/) — MoveIt 2 layer
+- [`open_manipulator_6dof_moveit`](../open_manipulator_friends_ros2/open_manipulator_6dof_moveit/) — MoveIt 2 layer
 - [`go2w_remote_arm`](../go2w_remote_arm/) — direct-DXL teleop (no MoveIt) for
   manual jogging when you don't need autonomy

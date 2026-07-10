@@ -104,9 +104,14 @@ class MoveItClient:
         self._grip_client = ActionClient(node, GripperCommand, gripper_action_name)
 
     # ---------------- lifecycle ----------------
-    def wait_for_servers(self, timeout_sec: float = 30.0) -> bool:
+    def wait_for_move_server(self, timeout_sec: float = 30.0) -> bool:
         if not self._move_client.wait_for_server(timeout_sec=timeout_sec):
             self.node.get_logger().error("MoveGroup action server not available")
+            return False
+        return True
+
+    def wait_for_servers(self, timeout_sec: float = 30.0) -> bool:
+        if not self.wait_for_move_server(timeout_sec=timeout_sec):
             return False
         if not self._grip_client.wait_for_server(timeout_sec=timeout_sec):
             self.node.get_logger().error("GripperCommand action server not available")
@@ -229,8 +234,16 @@ class MoveItClient:
         req.goal_constraints.append(gc)
         return self._send_move_goal(req)
 
-    def move_to_pose(self, pose: Pose, ee_link: Optional[str] = None) -> bool:
+    def move_to_pose(
+        self,
+        pose: Pose,
+        ee_link: Optional[str] = None,
+        position_tolerance: Optional[float] = None,
+        orientation_tolerance: Optional[float] = None,
+    ) -> bool:
         link = ee_link or self.ee_link
+        pos_tol = self.pos_tol if position_tolerance is None else float(position_tolerance)
+        ori_tol = self.ori_tol if orientation_tolerance is None else float(orientation_tolerance)
         req = self._new_plan_request(self.arm_group)
         gc = Constraints()
 
@@ -243,7 +256,7 @@ class MoveItClient:
         pc.target_point_offset.z = 0.0
         sphere = SolidPrimitive()
         sphere.type = SolidPrimitive.SPHERE
-        sphere.dimensions = [self.pos_tol]
+        sphere.dimensions = [pos_tol]
         pc.constraint_region.primitives.append(sphere)
         ps = PoseStamped()
         ps.header.frame_id = self.reference_frame
@@ -257,9 +270,9 @@ class MoveItClient:
         oc.header.frame_id = self.reference_frame
         oc.link_name = link
         oc.orientation = pose.orientation
-        oc.absolute_x_axis_tolerance = self.ori_tol
-        oc.absolute_y_axis_tolerance = self.ori_tol
-        oc.absolute_z_axis_tolerance = self.ori_tol
+        oc.absolute_x_axis_tolerance = ori_tol
+        oc.absolute_y_axis_tolerance = ori_tol
+        oc.absolute_z_axis_tolerance = ori_tol
         oc.weight = 1.0
         gc.orientation_constraints.append(oc)
 
@@ -270,13 +283,19 @@ class MoveItClient:
         self,
         x: float, y: float, z: float,
         roll: float = 0.0, pitch: float = 0.0, yaw: float = 0.0,
+        position_tolerance: Optional[float] = None,
+        orientation_tolerance: Optional[float] = None,
     ) -> bool:
         p = Pose()
         p.position.x = x
         p.position.y = y
         p.position.z = z
         p.orientation = quat_from_rpy(roll, pitch, yaw)
-        return self.move_to_pose(p)
+        return self.move_to_pose(
+            p,
+            position_tolerance=position_tolerance,
+            orientation_tolerance=orientation_tolerance,
+        )
 
     def set_gripper(self, position: float, max_effort: float = 5.0) -> bool:
         goal = GripperCommand.Goal()

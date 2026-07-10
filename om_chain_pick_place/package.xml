@@ -7,17 +7,26 @@
   <maintainer email="biancanobelia@gmail.com">unitree</maintainer>
   <license>Apache-2.0</license>
 
+  <buildtool_depend>ament_python</buildtool_depend>
+
   <exec_depend>rclpy</exec_depend>
+  <exec_depend>rcl_interfaces</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>control_msgs</exec_depend>
   <exec_depend>moveit_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>std_srvs</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
   <exec_depend>cv_bridge</exec_depend>
   <exec_depend>visualization_msgs</exec_depend>
+  <exec_depend>rqt_image_view</exec_depend>
   <exec_depend>om_chain_bringup</exec_depend>
-  <exec_depend>om_chain_moveit_config</exec_depend>
+  <exec_depend>open_manipulator_6dof_moveit</exec_depend>
+  <exec_depend>go2w_remote_arm</exec_depend>
 
   <export>
     <build_type>ament_python</build_type>

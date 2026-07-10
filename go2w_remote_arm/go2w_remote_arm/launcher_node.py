@@ -54,7 +54,7 @@ class ArmLauncher(Node):
         # On launcher startup (= Jetson boot when running via systemd):
         # torque ON the IDs in `boot_torque_on_ids`, torque OFF the IDs in
         # `boot_torque_off_ids`. IDs in neither list are left untouched.
-        self.declare_parameter("device", "/dev/ttyUSB0")
+        self.declare_parameter("device", "/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FT5NUUIQ-if00-port0")
         self.declare_parameter("baudrate", 1000000)
         self.declare_parameter("boot_torque_on_ids", [31, 24])
         self.declare_parameter("boot_torque_off_ids", [32, 33, 35, 26, 37])
