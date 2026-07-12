@@ -1,0 +1,21 @@
+[unit info]
+Data Name	value	unit	Sign Type	Offset
+Present Velocity	0.0119380521	rad/s	signed	0.0
+Goal Velocity	0.0119380521	rad/s	signed	0.0
+Present Current	1.0	raw	signed	0.0
+Goal Current	1.0	raw	signed	0.0
+Present Position	0.0015339807878856412	rad	signed	0.0
+Goal Position	0.0015339807878856412	rad	signed	0.0
+
+[control table]
+Address	Size	Data Name
+72	1	Hardware Error Status
+73	1	Moving
+74	2	Present Current
+76	4	Present Velocity
+80	4	Present Position
+84	4	Position Trajectory
+200	1	Torque Enable
+202	2	Goal Current
+204	4	Goal Velocity
+208	4	Goal Position

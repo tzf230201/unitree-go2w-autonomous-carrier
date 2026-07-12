@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>dynamixel_hardware_interface</name>
+  <version>1.5.0</version>
+  <description>
+    ROS 2 package providing a hardware interface for controlling Dynamixel motors via the ROS 2 control framework.
+  </description>
+  <maintainer email="pyo@robotis.com">Pyo</maintainer>
+  <license>Apache 2.0</license>
+  <author email="hjkim@robotis.com">Hye-Jong KIM</author>
+  <author email="wsh@robotis.com">Sungho Woo</author>
+  <author email="wwj@robotis.com">Woojin Wie</author>
+  <author email="ywh@robotis.com">Wonho Yun</author>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>hardware_interface</depend>
+  <depend>pluginlib</depend>
+  <depend>realtime_tools</depend>
+  <depend>dynamixel_sdk</depend>
+  <depend>std_srvs</depend>
+  <depend>dynamixel_interfaces</depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

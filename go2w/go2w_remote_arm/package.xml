@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>go2w_remote_arm</name>
+  <version>0.1.0</version>
+  <description>Bridge from Go2W wireless remote (/wirelesscontroller) to OpenManipulator-X direct joint trajectory commands.</description>
+  <maintainer email="biancanobelia@gmail.com">unitree</maintainer>
+  <license>Apache-2.0</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>unitree_go</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>visualization_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>control_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
+  <exec_depend>dynamixel_sdk</exec_depend>
+  <!-- IK mode (Select toggle): URDF parsing + KDL kinematics -->
+  <exec_depend>python3-pykdl</exec_depend>
+  <exec_depend>urdfdom_py</exec_depend>
+  <exec_depend>om6dof_description</exec_depend>
+  <exec_depend>om6dof_bringup</exec_depend>
+  <exec_depend>om6dof_moveit_config</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

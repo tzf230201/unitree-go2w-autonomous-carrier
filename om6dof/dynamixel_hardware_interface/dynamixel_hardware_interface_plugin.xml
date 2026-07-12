@@ -1,0 +1,9 @@
+<library path="dynamixel_hardware_interface">
+  <class name="dynamixel_hardware_interface/DynamixelHardware"
+         type="dynamixel_hardware_interface::DynamixelHardware"
+         base_class_type="hardware_interface::SystemInterface">
+    <description>
+      dynamixel_hardware_interface
+    </description>
+  </class>
+</library>

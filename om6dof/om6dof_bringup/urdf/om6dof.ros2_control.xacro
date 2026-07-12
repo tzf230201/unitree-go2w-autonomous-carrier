@@ -1,0 +1,285 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!--
+    ros2_control configuration for the 6-DOF OM6DOF on this rig.
+    7 Dynamixels, custom IDs:
+      joint1  XM430-W350  ID 31
+      joint2  XM430-W350  ID 32
+      joint3  XM430-W350  ID 33
+      joint4  XM430-W210  ID 24
+      joint5  XM430-W350  ID 35
+      joint6  XM430-W210  ID 26
+      gripper_left_joint XM430-W350 ID 37
+
+    `gripper_right_joint` is a URDF mimic of `gripper_left_joint` and has no motor.
+    7 ros2_control joints map 1:1 to 7 motors (identity transmission matrices).
+  -->
+
+  <xacro:macro name="om6dof_ros2_control" params="
+      name
+      prefix:=''
+      port_name:=/dev/ttyUSB0
+      baudrate:=1000000
+      use_fake_hardware:=false">
+
+    <ros2_control name="${name}" type="system">
+
+      <xacro:if value="${use_fake_hardware}">
+        <hardware>
+          <plugin>mock_components/GenericSystem</plugin>
+          <param name="state_following_offset">0.0</param>
+        </hardware>
+      </xacro:if>
+
+      <xacro:unless value="${use_fake_hardware}">
+        <hardware>
+          <plugin>dynamixel_hardware_interface/DynamixelHardware</plugin>
+          <param name="port_name">${port_name}</param>
+          <param name="baud_rate">${baudrate}</param>
+          <param name="error_timeout_sec">0.5</param>
+          <!-- Plain SyncRead from the start. FastSyncRead is tighter on bus
+               timing and throws -3001 SYNC_READ_FAIL on the first cycle after
+               activation + sporadically under CPU load. -->
+          <param name="use_fast_read_protocol">0</param>
+          <param name="dynamixel_model_folder">/param/dxl_model</param>
+          <param name="number_of_joints">7</param>
+          <param name="number_of_transmissions">7</param>
+          <!-- Identity matrices: joint i ↔ motor i -->
+          <param name="transmission_to_joint_matrix">
+            1, 0, 0, 0, 0, 0, 0,
+            0, 1, 0, 0, 0, 0, 0,
+            0, 0, 1, 0, 0, 0, 0,
+            0, 0, 0, 1, 0, 0, 0,
+            0, 0, 0, 0, 1, 0, 0,
+            0, 0, 0, 0, 0, 1, 0,
+            0, 0, 0, 0, 0, 0, 1
+          </param>
+          <param name="joint_to_transmission_matrix">
+            1, 0, 0, 0, 0, 0, 0,
+            0, 1, 0, 0, 0, 0, 0,
+            0, 0, 1, 0, 0, 0, 0,
+            0, 0, 0, 1, 0, 0, 0,
+            0, 0, 0, 0, 1, 0, 0,
+            0, 0, 0, 0, 0, 1, 0,
+            0, 0, 0, 0, 0, 0, 1
+          </param>
+          <param name="ros_update_freq">200</param>
+          <param name="disable_torque_at_init">true</param>
+          <param name="dynamixel_state_pub_msg_name">dynamixel_hardware_interface/dxl_state</param>
+          <param name="get_dynamixel_data_srv_name">dynamixel_hardware_interface/get_dxl_data</param>
+          <param name="set_dynamixel_data_srv_name">dynamixel_hardware_interface/set_dxl_data</param>
+          <param name="reboot_dxl_srv_name">dynamixel_hardware_interface/reboot_dxl</param>
+          <param name="set_dxl_torque_srv_name">dynamixel_hardware_interface/set_dxl_torque</param>
+
+        </hardware>
+      </xacro:unless>
+
+      <!-- ===== joints (7 total, identity-mapped) =====
+           initial_value is ONLY used by fake_components (RViz sim) so the arm
+           starts at the non-singular `rest` pose instead of q=0 (straight up,
+           which is a wrist singularity where Servo emergency-stops). On real
+           hardware the dxl interface reads encoders and ignores these. -->
+      <joint name="${prefix}joint1">
+        <command_interface name="position"/>
+        <state_interface name="position">
+          <param name="initial_value">0.0</param>
+        </state_interface>
+        <state_interface name="velocity"/>
+        <state_interface name="effort"/>
+      </joint>
+      <joint name="${prefix}joint2">
+        <command_interface name="position"/>
+        <state_interface name="position">
+          <param name="initial_value">-0.6806</param>
+        </state_interface>
+        <state_interface name="velocity"/>
+        <state_interface name="effort"/>
+      </joint>
+      <joint name="${prefix}joint3">
+        <command_interface name="position"/>
+        <state_interface name="position">
+          <param name="initial_value">1.3613</param>
+        </state_interface>
+        <state_interface name="velocity"/>
+        <state_interface name="effort"/>
+      </joint>
+      <joint name="${prefix}joint4">
+        <command_interface name="position"/>
+        <state_interface name="position">
+          <param name="initial_value">0.0</param>
+        </state_interface>
+        <state_interface name="velocity"/>
+        <state_interface name="effort"/>
+      </joint>
+      <joint name="${prefix}joint5">
+        <command_interface name="position"/>
+        <state_interface name="position">
+          <param name="initial_value">0.8901</param>
+        </state_interface>
+        <state_interface name="velocity"/>
+        <state_interface name="effort"/>
+      </joint>
+      <joint name="${prefix}joint6">
+        <command_interface name="position"/>
+        <state_interface name="position">
+          <param name="initial_value">0.0</param>
+        </state_interface>
+        <state_interface name="velocity"/>
+        <state_interface name="effort"/>
+      </joint>
+      <joint name="${prefix}gripper_left_joint">
+        <command_interface name="position"/>
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+        <state_interface name="effort"/>
+      </joint>
+
+      <!-- ===== Dynamixels (gpio entries, 7 total) =====
+           Arm joints (dxl1-6): Drive Mode 4 = Time-based Profile, so
+           Profile Velocity/Acceleration are a move-duration/accel-duration
+           in ms (not raw velocity/accel units) — matches
+           ROBOTIS-GIT/open_manipulator's open_manipulator_x_position xacro
+           pattern, and mirrors teleop_node.py's _enable_stream_profile
+           (stream_profile_ms=150 / stream_accel_ms=50) so the MoveIt path
+           and the direct/teleop path move with the same feel. Time-based
+           Profile lets the trajectory controller stream waypoints and have
+           every joint arrive together, instead of each servo racing at its
+           own max velocity. Gripper (dxl7) is left on the servo's default
+           profile mode since teleop_node.py never rewrites its Drive Mode. -->
+      <gpio name="dxl1">
+        <param name="type">dxl</param>
+        <param name="ID">31</param>
+        <command_interface name="Goal Position"/>
+        <state_interface name="Present Position"/>
+        <state_interface name="Present Velocity"/>
+        <state_interface name="Present Current"/>
+        <state_interface name="Torque Enable"/>
+        <state_interface name="Present Input Voltage"/>
+        <param name="Operating Mode">3</param>
+        <param name="Position P Gain">800</param>
+        <param name="Position I Gain">100</param>
+        <param name="Position D Gain">100</param>
+        <param name="Profile Velocity">150</param>
+        <param name="Profile Acceleration">50</param>
+        <param name="Drive Mode">4</param>
+        <param name="Return Delay Time">0</param>
+      </gpio>
+      <gpio name="dxl2">
+        <param name="type">dxl</param>
+        <param name="ID">32</param>
+        <command_interface name="Goal Position"/>
+        <state_interface name="Present Position"/>
+        <state_interface name="Present Velocity"/>
+        <state_interface name="Present Current"/>
+        <state_interface name="Torque Enable"/>
+        <state_interface name="Present Input Voltage"/>
+        <param name="Operating Mode">3</param>
+        <param name="Position P Gain">800</param>
+        <param name="Position I Gain">100</param>
+        <param name="Position D Gain">100</param>
+        <param name="Profile Velocity">150</param>
+        <param name="Profile Acceleration">50</param>
+        <param name="Drive Mode">4</param>
+        <param name="Return Delay Time">0</param>
+      </gpio>
+      <gpio name="dxl3">
+        <param name="type">dxl</param>
+        <param name="ID">33</param>
+        <command_interface name="Goal Position"/>
+        <state_interface name="Present Position"/>
+        <state_interface name="Present Velocity"/>
+        <state_interface name="Present Current"/>
+        <state_interface name="Torque Enable"/>
+        <state_interface name="Present Input Voltage"/>
+        <param name="Operating Mode">3</param>
+        <param name="Position P Gain">800</param>
+        <param name="Position I Gain">100</param>
+        <param name="Position D Gain">100</param>
+        <param name="Profile Velocity">150</param>
+        <param name="Profile Acceleration">50</param>
+        <param name="Drive Mode">4</param>
+        <param name="Return Delay Time">0</param>
+      </gpio>
+      <gpio name="dxl4">
+        <param name="type">dxl</param>
+        <param name="ID">24</param>
+        <command_interface name="Goal Position"/>
+        <state_interface name="Present Position"/>
+        <state_interface name="Present Velocity"/>
+        <state_interface name="Present Current"/>
+        <state_interface name="Torque Enable"/>
+        <state_interface name="Present Input Voltage"/>
+        <param name="Operating Mode">3</param>
+        <param name="Position P Gain">800</param>
+        <param name="Position I Gain">100</param>
+        <param name="Position D Gain">100</param>
+        <param name="Profile Velocity">150</param>
+        <param name="Profile Acceleration">50</param>
+        <param name="Drive Mode">4</param>
+        <param name="Return Delay Time">0</param>
+      </gpio>
+      <gpio name="dxl5">
+        <param name="type">dxl</param>
+        <param name="ID">35</param>
+        <command_interface name="Goal Position"/>
+        <state_interface name="Present Position"/>
+        <state_interface name="Present Velocity"/>
+        <state_interface name="Present Current"/>
+        <state_interface name="Torque Enable"/>
+        <state_interface name="Present Input Voltage"/>
+        <param name="Operating Mode">3</param>
+        <param name="Position P Gain">800</param>
+        <param name="Position I Gain">100</param>
+        <param name="Position D Gain">100</param>
+        <param name="Profile Velocity">150</param>
+        <param name="Profile Acceleration">50</param>
+        <param name="Drive Mode">4</param>
+        <param name="Return Delay Time">0</param>
+      </gpio>
+      <gpio name="dxl6">
+        <param name="type">dxl</param>
+        <param name="ID">26</param>
+        <command_interface name="Goal Position"/>
+        <state_interface name="Present Position"/>
+        <state_interface name="Present Velocity"/>
+        <state_interface name="Present Current"/>
+        <state_interface name="Torque Enable"/>
+        <state_interface name="Present Input Voltage"/>
+        <param name="Operating Mode">3</param>
+        <param name="Position P Gain">800</param>
+        <param name="Position I Gain">100</param>
+        <param name="Position D Gain">100</param>
+        <param name="Profile Velocity">150</param>
+        <param name="Profile Acceleration">50</param>
+        <param name="Drive Mode">4</param>
+        <param name="Return Delay Time">0</param>
+      </gpio>
+      <!-- OM-X gripper settings, with only the physical Dynamixel ID changed. -->
+      <gpio name="dxl7">
+        <param name="type">dxl</param>
+        <param name="ID">37</param>
+        <command_interface name="Goal Position"/>
+        <state_interface name="Present Position"/>
+        <state_interface name="Present Velocity"/>
+        <state_interface name="Present Current"/>
+        <state_interface name="Torque Enable"/>
+        <state_interface name="Present Input Voltage"/>
+        <param name="Operating Mode">5</param>
+        <param name="Profile Velocity">20</param>
+        <param name="Profile Acceleration">10</param>
+        <param name="Drive Mode">5</param>
+        <param name="Return Delay Time">0</param>
+        <param name="Goal Current">200</param>
+        <param name="[unit info]">
+          Present Position,0.000017626621790,m,signed,-0.036099321;
+          Goal Position,0.000017626621790,m,signed,-0.036099321;
+          Present Velocity,0.000275558153557,rad/s,signed,0.0;
+          Goal Velocity,0.000275558153557,rad/s,signed,0.0;
+        </param>
+      </gpio>
+
+    </ros2_control>
+  </xacro:macro>
+
+</robot>

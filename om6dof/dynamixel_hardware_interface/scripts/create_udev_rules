@@ -1,0 +1,16 @@
+#!/bin/bash
+
+echo ""
+echo "This script copies a udev rule to /etc to facilitate bringing"
+echo "up the usb connection."
+echo ""
+
+package_name=${package_name:="dynamixel_hardware_interface"}
+
+sudo cp `ros2 pkg prefix $package_name`/share/$package_name/scripts/99-manipulator-cdc.rules /etc/udev/rules.d/
+
+echo ""
+echo "Reload rules"
+echo ""
+sudo udevadm control --reload-rules
+sudo udevadm trigger
