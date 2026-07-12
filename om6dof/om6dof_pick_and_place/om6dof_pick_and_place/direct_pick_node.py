@@ -1,6 +1,6 @@
 """Direct (no-MoveIt) vision pick-and-place sequencer.
 
-Talks to the go2w_remote_arm teleop node acting as an "arm server": it
+Talks to the om6dof_teleop teleop node acting as an "arm server": it
 streams Cartesian tool-pose goals on /arm_cart_goal and waits for
 /arm_cart_status to report "reached". The teleop node owns the hardware
 and does the IK + smooth Time-based-Profile streaming — the SAME PyKDL
@@ -90,7 +90,7 @@ class DirectPickNode(Node):
         self.declare_parameter("arm_joint_names",
                                ["joint1", "joint2", "joint3",
                                 "joint4", "joint5", "joint6"])
-        from go2w_remote_arm.ik_solver import IKSolver
+        from om6dof_teleop.ik_solver import IKSolver
         self.ik = IKSolver(
             base_link=str(self.get_parameter("ik_base_link").value),
             tip_link=str(self.get_parameter("ik_tip_link").value),
@@ -146,7 +146,7 @@ class DirectPickNode(Node):
         self.declare_parameter("joint_move_duration", 4.0)
         self.declare_parameter("joint_move_rate", 50.0)
         self.declare_parameter("joint_command_topic",
-                               "/go2w_remote_arm/joint_command")
+                               "/om6dof_teleop/joint_command")
 
         # once localised, a wrist camera loses the tag as it moves in — so we
         # keep the last good object pose and reuse it when detection is stale.
@@ -181,7 +181,7 @@ class DirectPickNode(Node):
         self._joint_cmd_pub = self.create_publisher(
             JointState, str(self.get_parameter("joint_command_topic").value), 10)
         self._gripper_cmd_pub = self.create_publisher(
-            String, "/go2w_remote_arm/gripper_cmd", 10)
+            String, "/om6dof_teleop/gripper_cmd", 10)
         self._track_pub = self.create_publisher(
             PoseStamped, "/arm_cart_track", 10)
         self._stop_pub = self.create_publisher(String, "/arm_cart_stop", 10)
@@ -217,7 +217,7 @@ class DirectPickNode(Node):
         self.create_service(Trigger, "/direct_reachable", self._on_reachable,
                             callback_group=cb)
         self.get_logger().info(
-            "direct pick ready — needs go2w_remote_arm teleop running as the "
+            "direct pick ready — needs om6dof_teleop teleop running as the "
             "arm server (publishes /joint_states + /arm_cart_status, "
             "subscribes /arm_cart_goal). Call /run_direct_pick.")
 

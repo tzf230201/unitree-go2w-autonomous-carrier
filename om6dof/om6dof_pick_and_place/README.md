@@ -345,5 +345,5 @@ approach (`grasp_pitch: 2.4` ≈ 45°) or move the tag closer to the arm.
 - [`om6dof_bringup`](../om6dof_bringup/) — hardware bringup
 - `om6dof_moveit_config` — MoveIt 2 layer
 - `om6dof_bringup` — ros2_control hardware layer
-- [`go2w_remote_arm`](../go2w_remote_arm/) — direct-DXL teleop (no MoveIt) for
+- [`om6dof_teleop`](../om6dof_teleop/) — direct-DXL teleop (no MoveIt) for
   manual jogging when you don't need autonomy

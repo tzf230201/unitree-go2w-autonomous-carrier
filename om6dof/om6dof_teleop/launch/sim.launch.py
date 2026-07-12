@@ -1,6 +1,6 @@
 """RViz simulation of the remote teleop — NO hardware.
 
-Runs go2w_remote_arm's teleop_node in `sim_mode`, so it subscribes to the
+Runs om6dof_teleop's teleop_node in `sim_mode`, so it subscribes to the
 real `/wirelesscontroller` and runs the exact same JOINT/IK control logic,
 but instead of driving Dynamixels it just publishes `/joint_states`. A
 robot_state_publisher (om_chain URDF) + RViz then visualize the motion.
@@ -8,7 +8,7 @@ robot_state_publisher (om_chain URDF) + RViz then visualize the motion.
 Use this to verify the control feel against the URDF before touching the
 real arm:
 
-    ros2 launch go2w_remote_arm sim.launch.py
+    ros2 launch om6dof_teleop sim.launch.py
 
 Then on the Go2W remote: tap Select to enter IK mode, jog with the d-pad /
 A-Y-X-B / sticks / R1-R2 / L1-L2 and watch the arm in RViz.
@@ -48,9 +48,9 @@ def generate_launch_description():
     )
 
     teleop = Node(
-        package="go2w_remote_arm",
+        package="om6dof_teleop",
         executable="teleop_node",
-        name="go2w_remote_arm",
+        name="om6dof_teleop",
         output="screen",
         parameters=[{
             "sim_mode": True,
@@ -84,7 +84,7 @@ def generate_launch_description():
     )
 
     rviz_config = PathJoinSubstitution([
-        FindPackageShare("go2w_remote_arm"), "launch", "sim.rviz",
+        FindPackageShare("om6dof_teleop"), "launch", "sim.rviz",
     ])
     rviz = Node(
         package="rviz2",

@@ -44,9 +44,9 @@ def generate_launch_description():
     )
 
     teleop = Node(
-        package="go2w_remote_arm",
+        package="om6dof_teleop",
         executable="teleop_node",
-        name="go2w_remote_arm",
+        name="om6dof_teleop",
         output="screen",
         parameters=[{
             "device": LaunchConfiguration("device"),
@@ -82,7 +82,7 @@ def generate_launch_description():
             "gripper_open_target": -1.0,
             "gripper_close_target": 0.5,
             "enable_joint_command_subscriber": True,
-            "joint_command_topic": "/go2w_remote_arm/joint_command",
+            "joint_command_topic": "/om6dof_teleop/joint_command",
         }],
         emulate_tty=True,
     )

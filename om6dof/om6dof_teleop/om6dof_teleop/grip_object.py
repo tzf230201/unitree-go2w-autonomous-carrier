@@ -8,13 +8,13 @@ is reached with no current spike, the jaws are empty and simply closed fully.
 
 This talks to the Dynamixel bus directly (dynamixel_sdk, Protocol 2.0), the
 same way teleop_node does. It therefore needs EXCLUSIVE access to the serial
-port: stop go2w_remote_arm teleop before running this, or they will fight over
+port: stop om6dof_teleop teleop before running this, or they will fight over
 /dev/ttyUSB0.
 
 Run standalone:
-    python3 -m go2w_remote_arm.grip_object
+    python3 -m om6dof_teleop.grip_object
 or via the installed console script:
-    ros2 run go2w_remote_arm grip_object -- --current-threshold 120
+    ros2 run om6dof_teleop grip_object -- --current-threshold 120
 
 Detection is torque-based (Present Current, addr 126). No extra sensor needed —
 an empty jaw reaches CLOSE freely (low current); a jaw pressing on an object

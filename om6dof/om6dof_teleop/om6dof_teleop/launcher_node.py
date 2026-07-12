@@ -1,7 +1,7 @@
 """F3-button watchdog for the Go2W remote.
 
 Subscribes to `/wirelesscontroller`. When the F3 button (bit 7) rises:
-  - if the teleop launch is NOT running → spawn `ros2 launch go2w_remote_arm
+  - if the teleop launch is NOT running → spawn `ros2 launch om6dof_teleop
     teleop.launch.py` as a child process
   - if it IS running → send SIGINT to the whole process group so the teleop
     shuts down gracefully
@@ -33,7 +33,7 @@ from dynamixel_sdk import PortHandler, PacketHandler, COMM_SUCCESS
 
 BTN_F3 = 1 << 7
 
-LAUNCH_CMD = ["ros2", "launch", "go2w_remote_arm", "teleop.launch.py"]
+LAUNCH_CMD = ["ros2", "launch", "om6dof_teleop", "teleop.launch.py"]
 
 # Dynamixel addresses we touch at boot for the partial-torque setup.
 ADDR_TORQUE_ENABLE = 64
@@ -43,7 +43,7 @@ PROTOCOL_VERSION = 2.0
 
 class ArmLauncher(Node):
     def __init__(self) -> None:
-        super().__init__("go2w_remote_arm_launcher")
+        super().__init__("om6dof_teleop_launcher")
 
         self.declare_parameter("debounce_seconds", 0.5)
         self.declare_parameter("stop_timeout_seconds", 5.0)
@@ -80,7 +80,7 @@ class ArmLauncher(Node):
 
         self.get_logger().info(
             "Arm launcher ready — tap F3 on the Go2W remote to start/stop "
-            "go2w_remote_arm teleop."
+            "om6dof_teleop teleop."
         )
 
     # ---------------- boot-time torque state ----------------

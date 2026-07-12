@@ -20,7 +20,7 @@ The page itself refreshes ONLY when you reload / press Refresh (the camera is a
 separate live stream). Data is read on demand.
 
 Run:
-    ros2 run go2w_remote_arm web_monitor
+    ros2 run om6dof_teleop web_monitor
     # then open http://<robot-ip>:8080  from a phone/laptop on the same net
 Options via ROS params:  port (default 8080), camera_width/height/fps.
 """
@@ -60,7 +60,7 @@ except Exception:  # pragma: no cover
 
 
 BTN_F3 = 1 << 7
-TELEOP_NODE_NAME = "go2w_remote_arm"
+TELEOP_NODE_NAME = "om6dof_teleop"
 ARM_BUS_DEVICE = "/dev/ttyUSB0"
 
 # Unitree sport-mode API ids (verified against the official Unitree ROS2
@@ -222,7 +222,7 @@ class MonitorNode(Node):
             history=HistoryPolicy.KEEP_LAST,
         )
         self.create_subscription(
-            String, "/go2w_remote_arm/gripper_state", self._on_gripper, grip_qos
+            String, "/om6dof_teleop/gripper_state", self._on_gripper, grip_qos
         )
         # Battery from /lowstate (~500 Hz). The callback only stores the latest
         # values — no processing — so it stays cheap.
@@ -650,12 +650,12 @@ _FALLBACK_SKILL = (
 
 def load_skill() -> str:
     """Return the Robot Agent system prompt. Prefer the installed skill .md
-    (share/go2w_remote_arm/skills/), extracting the text between the <<<SKILL and
+    (share/om6dof_teleop/skills/), extracting the text between the <<<SKILL and
     SKILL>>> markers; fall back to the embedded minimal prompt."""
     try:
         from ament_index_python.packages import get_package_share_directory
         path = os.path.join(
-            get_package_share_directory("go2w_remote_arm"),
+            get_package_share_directory("om6dof_teleop"),
             "skills", "go2w_control_skill.md",
         )
         with open(path, encoding="utf-8") as f:

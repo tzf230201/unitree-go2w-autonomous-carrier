@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>go2w_remote_arm</name>
+  <name>om6dof_teleop</name>
   <version>0.1.0</version>
   <description>Bridge from Go2W wireless remote (/wirelesscontroller) to OpenManipulator-X direct joint trajectory commands.</description>
   <maintainer email="biancanobelia@gmail.com">unitree</maintainer>

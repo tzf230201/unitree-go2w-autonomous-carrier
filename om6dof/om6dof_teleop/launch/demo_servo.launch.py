@@ -6,8 +6,8 @@ limits. The remote only sends Cartesian twists.
   use_fake_hardware:=true  (default) → test in RViz, no robot
   use_fake_hardware:=false           → drive the real arm
 
-    ros2 launch go2w_remote_arm demo_servo.launch.py
-    ros2 launch go2w_remote_arm demo_servo.launch.py use_fake_hardware:=false
+    ros2 launch om6dof_teleop demo_servo.launch.py
+    ros2 launch om6dof_teleop demo_servo.launch.py use_fake_hardware:=false
 
 ⚠ For the real arm, stop go2w-arm-launcher.service first (port conflict):
     sudo systemctl stop go2w-arm-launcher.service
@@ -53,7 +53,7 @@ def generate_launch_description():
 
     # 4. Remote → Servo bridge
     bridge = TimerAction(period=6.0, actions=[Node(
-        package="go2w_remote_arm",
+        package="om6dof_teleop",
         executable="remote_servo_bridge",
         name="remote_servo_bridge",
         output="screen",

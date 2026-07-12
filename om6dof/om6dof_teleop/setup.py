@@ -1,7 +1,7 @@
 from setuptools import setup
 from glob import glob
 
-package_name = 'go2w_remote_arm'
+package_name = 'om6dof_teleop'
 
 setup(
     name=package_name,
@@ -23,11 +23,11 @@ setup(
     license='Apache-2.0',
     entry_points={
         'console_scripts': [
-            'teleop_node = go2w_remote_arm.teleop_node:main',
-            'arm_launcher = go2w_remote_arm.launcher_node:main',
-            'remote_servo_bridge = go2w_remote_arm.remote_servo_bridge:main',
-            'grip_object = go2w_remote_arm.grip_object:main',
-            'web_monitor = go2w_remote_arm.web_monitor:main',
+            'teleop_node = om6dof_teleop.teleop_node:main',
+            'arm_launcher = om6dof_teleop.launcher_node:main',
+            'remote_servo_bridge = om6dof_teleop.remote_servo_bridge:main',
+            'grip_object = om6dof_teleop.grip_object:main',
+            'web_monitor = om6dof_teleop.web_monitor:main',
         ],
     },
 )

@@ -61,7 +61,7 @@ Visualization Manager:
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /go2w_remote_arm/ee_marker
+        Value: /om6dof_teleop/ee_marker
       Value: true
   Global Options:
     Background Color: 48; 48; 48

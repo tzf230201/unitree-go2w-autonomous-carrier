@@ -2,7 +2,7 @@
 
 Starts the AprilTag detector, the direct pick sequencer, and the live
 calibration web GUI — all reading the shared config/tag_pick.yaml. The arm
-itself is driven by the go2w_remote_arm teleop node acting as the arm
+itself is driven by the om6dof_teleop teleop node acting as the arm
 server (it does the PyKDL IK + smooth Time-based-Profile streaming).
 
 The teleop arm server normally runs as the systemd service
@@ -86,9 +86,9 @@ def generate_launch_description():
         emulate_tty=True,
     )
     arm_server = Node(
-        package="go2w_remote_arm",
+        package="om6dof_teleop",
         executable="teleop_node",
-        name="go2w_remote_arm",
+        name="om6dof_teleop",
         output="screen",
         parameters=[{
             "port_name": LaunchConfiguration("port_name"),

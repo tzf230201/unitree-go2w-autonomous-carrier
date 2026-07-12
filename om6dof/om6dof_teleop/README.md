@@ -1,4 +1,4 @@
-# go2w_remote_arm
+# om6dof_teleop
 
 A ROS 2 Python package that lets you teleoperate a 6-DOF OpenManipulator-style
 arm using the **Go2W wireless remote controller**. The arm is driven directly
@@ -137,7 +137,7 @@ updates from `_tick` look smooth.
 
 ```bash
 cd ~/ros2_ws
-colcon build --packages-select go2w_remote_arm --symlink-install
+colcon build --packages-select om6dof_teleop --symlink-install
 source install/setup.bash
 ```
 
@@ -154,19 +154,19 @@ Two terminals:
 
 ```bash
 # Terminal 1 — the F3 watchdog. Also runs the boot torque step.
-ros2 run go2w_remote_arm arm_launcher
+ros2 run om6dof_teleop arm_launcher
 ```
 
 Then tap **F3** on the Go2W remote — the second terminal will see
-`arm_launcher` spawn `ros2 launch go2w_remote_arm teleop.launch.py`.
+`arm_launcher` spawn `ros2 launch om6dof_teleop teleop.launch.py`.
 
 To launch the teleop **directly** (skipping F3 detection), e.g. for
 development:
 
 ```bash
-ros2 launch go2w_remote_arm teleop.launch.py
+ros2 launch om6dof_teleop teleop.launch.py
 # overrides:
-ros2 launch go2w_remote_arm teleop.launch.py joint_velocity:=0.3
+ros2 launch om6dof_teleop teleop.launch.py joint_velocity:=0.3
 ```
 
 ---
@@ -174,10 +174,10 @@ ros2 launch go2w_remote_arm teleop.launch.py joint_velocity:=0.3
 ## Autorun at boot (systemd)
 
 A unit file is installed by colcon under
-`install/go2w_remote_arm/share/go2w_remote_arm/systemd/`. To enable:
+`install/om6dof_teleop/share/om6dof_teleop/systemd/`. To enable:
 
 ```bash
-sudo cp /home/unitree/ros2_ws/install/go2w_remote_arm/share/go2w_remote_arm/systemd/go2w-arm-launcher.service \
+sudo cp /home/unitree/ros2_ws/install/om6dof_teleop/share/om6dof_teleop/systemd/go2w-arm-launcher.service \
         /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable go2w-arm-launcher.service
@@ -238,7 +238,7 @@ up. On systemd restart the boot-torque step re-runs.
 | Topic | Direction | Type | Notes |
 |---|---|---|---|
 | `/wirelesscontroller` | Sub | `unitree_go/msg/WirelessController` | BEST_EFFORT QoS. Both nodes subscribe. |
-| `/go2w_remote_arm/joint_command` | Sub | `sensor_msgs/msg/JointState` | Optional absolute joint target command used by `demo_june_2026`. |
+| `/om6dof_teleop/joint_command` | Sub | `sensor_msgs/msg/JointState` | Optional absolute joint target command used by `demo_june_2026`. |
 | `/joint_states` | Pub | `sensor_msgs/msg/JointState` | Published by `teleop_node` at the loop rate (default 50 Hz). |
 
 ---

@@ -130,7 +130,7 @@ class CalibGui(Node):
         self._latest_q = None
         self._ik = None
         try:
-            from go2w_remote_arm.ik_solver import IKSolver
+            from om6dof_teleop.ik_solver import IKSolver
             self._ik = IKSolver()
             self.create_subscription(
                 JointState, "/joint_states", self._on_joints, 10)

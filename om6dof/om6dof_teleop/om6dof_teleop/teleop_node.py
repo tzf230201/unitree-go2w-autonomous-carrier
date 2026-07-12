@@ -193,7 +193,7 @@ def _matrix_to_quat(R):
 
 class TeleopNode(Node):
     def __init__(self) -> None:
-        super().__init__("go2w_remote_arm")
+        super().__init__("om6dof_teleop")
 
         # ---- parameters ----
         # sim_mode: no serial port / no Dynamixels. The node still subscribes
@@ -261,7 +261,7 @@ class TeleopNode(Node):
         self.declare_parameter("grip_close_tol", 0.06)   # rad from close_target ⇒ fully CLOSED
         self.declare_parameter("grip_open_tol", 0.12)    # rad from open_target ⇒ OPEN
         self.declare_parameter("gripper_profile_velocity", 40)  # slow, gentle close
-        self.declare_parameter("gripper_state_topic", "/go2w_remote_arm/gripper_state")
+        self.declare_parameter("gripper_state_topic", "/om6dof_teleop/gripper_state")
 
         # gentle startup profile
         self.declare_parameter("startup_slow_vel", 30)
@@ -360,7 +360,7 @@ class TeleopNode(Node):
         # still works normally after or during a demo.
         self.declare_parameter("enable_joint_command_subscriber", True)
         self.declare_parameter(
-            "joint_command_topic", "/go2w_remote_arm/joint_command"
+            "joint_command_topic", "/om6dof_teleop/joint_command"
         )
 
         # ---- read parameters ----
@@ -660,7 +660,7 @@ class TeleopNode(Node):
         # the controlled end-effector point, so you can see both the IK target
         # position AND its orientation in RViz.
         self.pub_marker = self.create_publisher(
-            MarkerArray, "/go2w_remote_arm/ee_marker", 5
+            MarkerArray, "/om6dof_teleop/ee_marker", 5
         )
         # Gripper state (OPEN/CLOSING/HOLDING/CLOSED/DROPPED). TRANSIENT_LOCAL so
         # a monitor that subscribes later still receives the last known state.
@@ -674,7 +674,7 @@ class TeleopNode(Node):
         # External gripper command — same code path as the remote button, so
         # autonomous grasps (direct_pick) behave like the working remote grasp.
         self.create_subscription(
-            String, "/go2w_remote_arm/gripper_cmd", self._on_gripper_cmd, 10)
+            String, "/om6dof_teleop/gripper_cmd", self._on_gripper_cmd, 10)
         if bool(self.get_parameter("enable_joint_command_subscriber").value):
             self.create_subscription(
                 JointState,
@@ -771,7 +771,7 @@ class TeleopNode(Node):
         self._in_collision = False  # latched state for marker colouring
 
         self.get_logger().info(
-            f"go2w_remote_arm ready: {self.n_total} joints, "
+            f"om6dof_teleop ready: {self.n_total} joints, "
             f"vel={self.joint_velocity} rad/s, rate={self.publish_rate} Hz, "
             f"mode={self.mode}, sim={self.sim_mode}"
         )
