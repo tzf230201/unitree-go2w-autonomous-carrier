@@ -27,7 +27,7 @@
   <exec_depend>om6dof_bringup</exec_depend>
   <exec_depend>om6dof_description</exec_depend>
   <exec_depend>om6dof_moveit_config</exec_depend>
-  <exec_depend>om6dof_teleop</exec_depend>
+  <exec_depend>om6dof_controller</exec_depend>
 
   <export>
     <build_type>ament_python</build_type>

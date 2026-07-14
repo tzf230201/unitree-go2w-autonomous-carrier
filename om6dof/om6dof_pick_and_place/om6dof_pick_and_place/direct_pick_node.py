@@ -1,15 +1,11 @@
-"""Direct (no-MoveIt) vision pick-and-place sequencer.
+"""Direct vision pick-and-place sequencer through ordinary MoveGroup.
 
-Talks to the om6dof_teleop teleop node acting as an "arm server": it
-streams Cartesian tool-pose goals on /arm_cart_goal and waits for
-/arm_cart_status to report "reached". The teleop node owns the hardware
-and does the IK + smooth Time-based-Profile streaming — the SAME PyKDL
-kinematics the joystick uses. This node adds only the vision + sequence
-logic, so control stays clean and there is no planner in the loop.
+MoveGroup plans Cartesian and joint targets and executes them through
+``arm_controller``. ``om6dof_bringup`` remains the only hardware owner. Remote
+joint teleop must be OFF while this sequence runs.
 
-Kinematics here is self-contained: it loads the same IKSolver purely for
-FORWARD kinematics (joint angles → tool pose), so it needs neither TF nor
-robot_state_publisher. The wrist-camera extrinsic (camera_xyz/camera_rpy,
+Kinematics here loads IKSolver only for forward-kinematics reachability and
+camera calculations. The wrist-camera extrinsic (camera_xyz/camera_rpy,
 parent = end_effector_link) then places the tag in the arm base frame:
 
     world <- FK(joint_states) <- end_effector_link <- camera <- AprilTag
@@ -40,7 +36,7 @@ from typing import Optional
 
 import numpy as np
 import rclpy
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import Pose, PoseStamped
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
@@ -52,6 +48,7 @@ from std_srvs.srv import Trigger
 
 from .tag_pick_place_node import (R_BODY_OPTICAL, quat_to_matrix,
                                   rpy_to_matrix)
+from .moveit_client import MoveItClient
 
 
 def _matrix_to_quat(R):
@@ -90,7 +87,7 @@ class DirectPickNode(Node):
         self.declare_parameter("arm_joint_names",
                                ["joint1", "joint2", "joint3",
                                 "joint4", "joint5", "joint6"])
-        from om6dof_teleop.ik_solver import IKSolver
+        from om6dof_controller.ik_solver import IKSolver
         self.ik = IKSolver(
             base_link=str(self.get_parameter("ik_base_link").value),
             tip_link=str(self.get_parameter("ik_tip_link").value),
@@ -137,16 +134,16 @@ class DirectPickNode(Node):
                                [0.0, -0.6806, 1.3613, 0.0, 0.8901, 0.0])
         self.declare_parameter("place_pose",
                                [1.2, -0.5, 1.2, 0.0, 0.9, 0.0])
-        self.declare_parameter("gripper_open", -1.0)
-        self.declare_parameter("gripper_close", 0.0)
+        self.declare_parameter("gripper_open", 0.019)
+        self.declare_parameter("gripper_close", -0.010)
         self.declare_parameter("gripper_settle_s", 1.2)
         self.declare_parameter("goal_timeout_s", 25.0)
-        # joint-pose moves (ready/origin/place) use a minimum-jerk quintic
-        # trajectory streamed over this many seconds — smooth ease in/out.
-        self.declare_parameter("joint_move_duration", 4.0)
-        self.declare_parameter("joint_move_rate", 50.0)
-        self.declare_parameter("joint_command_topic",
-                               "/om6dof_teleop/joint_command")
+        self.declare_parameter("planning_time", 5.0)
+        self.declare_parameter("planning_attempts", 10)
+        self.declare_parameter("vel_scale", 0.2)
+        self.declare_parameter("acc_scale", 0.2)
+        self.declare_parameter("position_tolerance", 0.02)
+        self.declare_parameter("orientation_tolerance", 0.25)
 
         # once localised, a wrist camera loses the tag as it moves in — so we
         # keep the last good object pose and reuse it when detection is stale.
@@ -156,7 +153,6 @@ class DirectPickNode(Node):
         self._last_obj = None       # (tag_w, obj_w, R_wt)
         self._last_obj_t = 0.0
         self._joints: Optional[dict] = None
-        self._cart_status = "idle"
         self._status_line = "ready"
         self._run_lock = threading.Lock()
         self._busy = False
@@ -170,22 +166,19 @@ class DirectPickNode(Node):
             self._on_tag, 10, callback_group=cb)
         self.create_subscription(
             JointState, "/joint_states", self._on_joints, 10, callback_group=cb)
-        self.create_subscription(
-            String, "/arm_cart_status", self._on_cart_status,
-            QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
-                       durability=DurabilityPolicy.TRANSIENT_LOCAL,
-                       history=HistoryPolicy.KEEP_LAST),
-            callback_group=cb)
-        self._cart_goal_pub = self.create_publisher(
-            PoseStamped, "/arm_cart_goal", 10)
-        self._joint_cmd_pub = self.create_publisher(
-            JointState, str(self.get_parameter("joint_command_topic").value), 10)
-        self._gripper_cmd_pub = self.create_publisher(
-            String, "/om6dof_teleop/gripper_cmd", 10)
-        self._track_pub = self.create_publisher(
-            PoseStamped, "/arm_cart_track", 10)
-        self._stop_pub = self.create_publisher(String, "/arm_cart_stop", 10)
-        self.declare_parameter("track_rate", 10.0)   # Hz, hover re-publish
+        self.client = MoveItClient(
+            self,
+            arm_joint_names=self.arm_joints,
+            planning_time=float(self.get_parameter("planning_time").value),
+            num_planning_attempts=int(
+                self.get_parameter("planning_attempts").value),
+            max_velocity_scaling=float(self.get_parameter("vel_scale").value),
+            max_acceleration_scaling=float(self.get_parameter("acc_scale").value),
+            position_tolerance=float(
+                self.get_parameter("position_tolerance").value),
+            orientation_tolerance=float(
+                self.get_parameter("orientation_tolerance").value),
+        )
         # continuous reachability check for the live object
         self._reach_pub = self.create_publisher(
             String, "/direct_reach",
@@ -217,9 +210,8 @@ class DirectPickNode(Node):
         self.create_service(Trigger, "/direct_reachable", self._on_reachable,
                             callback_group=cb)
         self.get_logger().info(
-            "direct pick ready — needs om6dof_teleop teleop running as the "
-            "arm server (publishes /joint_states + /arm_cart_status, "
-            "subscribes /arm_cart_goal). Call /run_direct_pick.")
+            "direct pick ready — MoveGroup executes through arm_controller. "
+            "Ensure F3 remote mode is OFF, then call /run_direct_pick.")
 
     # ---------------- callbacks ----------------
     def _on_tag(self, msg: PoseStamped) -> None:
@@ -231,9 +223,6 @@ class DirectPickNode(Node):
 
     def _on_joints(self, msg: JointState) -> None:
         self._joints = dict(zip(msg.name, msg.position))
-
-    def _on_cart_status(self, msg: String) -> None:
-        self._cart_status = msg.data
 
     # ---------------- geometry ----------------
     def _arm_q(self) -> Optional[np.ndarray]:
@@ -352,101 +341,53 @@ class DirectPickNode(Node):
                          grip_pos[1] - fwd * bearing[1],
                          grip_pos[2] - up])
 
-    # ---------------- arm-server commands ----------------
+    # ---------------- MoveGroup commands ----------------
     def _send_cart(self, pos: np.ndarray, R: np.ndarray, label: str) -> bool:
-        """Publish a Cartesian goal and block until reached / failed."""
-        msg = PoseStamped()
-        msg.header.frame_id = "world"
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.pose.position.x, msg.pose.position.y, msg.pose.position.z = \
+        """Plan and execute one Cartesian target through MoveGroup."""
+        if self._cancel.is_set():
+            return False
+        if not self.client.wait_for_move_server(timeout_sec=5.0):
+            self.get_logger().error(
+                f"{label} FAILED: MoveGroup unavailable or remote mode still owns the arm")
+            return False
+        pose = Pose()
+        pose.position.x, pose.position.y, pose.position.z = \
             float(pos[0]), float(pos[1]), float(pos[2])
         qx, qy, qz, qw = _matrix_to_quat(R)
-        msg.pose.orientation.x = qx
-        msg.pose.orientation.y = qy
-        msg.pose.orientation.z = qz
-        msg.pose.orientation.w = qw
-        self._cart_status = "moving"
+        pose.orientation.x = qx
+        pose.orientation.y = qy
+        pose.orientation.z = qz
+        pose.orientation.w = qw
         self._status_line = f"{label} → ({pos[0]:+.3f},{pos[1]:+.3f},{pos[2]:+.3f})"
         self.get_logger().info(self._status_line)
-        self._cart_goal_pub.publish(msg)
-        deadline = time.monotonic() + float(self.get_parameter("goal_timeout_s").value)
-        # give the status a moment to flip to "moving"
-        time.sleep(0.2)
-        while rclpy.ok() and time.monotonic() < deadline:
-            if self._cancel.is_set():
-                self.get_logger().warn(f"{label} CANCELLED")
-                return False
-            if self._cart_status == "reached":
-                return True
-            if self._cart_status in ("unreachable", "idle"):
-                self.get_logger().error(
-                    f"{label} FAILED (arm status: {self._cart_status})")
-                return False
-            time.sleep(0.03)
-        self.get_logger().error(f"{label} TIMEOUT")
-        return False
+        ok = self.client.move_to_pose(pose)
+        if self._cancel.is_set():
+            self.get_logger().warn(f"{label} cancelled after current MoveGroup goal")
+            return False
+        if not ok:
+            self.get_logger().error(f"{label} FAILED in MoveGroup")
+        return ok
 
     def _send_joint_pose(self, pose, label: str) -> bool:
-        """Stream a MINIMUM-JERK (quintic) joint trajectory from the current
-        pose to `pose` over `joint_move_duration` seconds. Minimum jerk gives
-        zero velocity AND acceleration at both ends (a smooth S-curve), so the
-        arm eases in and out instead of snapping — much nicer than relying on
-        the motor's fixed Time-based Profile for a single large step."""
-        target = np.array([float(v) for v in pose])
-        q0 = self._arm_q()
-        if q0 is None:
-            # no joint feedback yet: fall back to a single command
-            js = JointState()
-            js.header.stamp = self.get_clock().now().to_msg()
-            js.name = list(self.arm_joints)
-            js.position = [float(v) for v in target]
-            self._joint_cmd_pub.publish(js)
-            time.sleep(2.0)
-            return True
-
-        T = float(self.get_parameter("joint_move_duration").value)
-        rate = float(self.get_parameter("joint_move_rate").value)
-        n = max(2, int(round(T * rate)))
-        dt = T / n
-        self._status_line = f"{label} (min-jerk {T:.1f}s)"
+        """Plan and execute a six-joint target through MoveGroup."""
+        if self._cancel.is_set():
+            return False
+        if not self.client.wait_for_move_server(timeout_sec=5.0):
+            return False
+        target = [float(v) for v in pose]
+        self._status_line = f"{label} (MoveGroup)"
         self.get_logger().info(self._status_line)
-
-        t0 = time.monotonic()
-        for i in range(1, n + 1):
-            if self._cancel.is_set():
-                self.get_logger().warn(f"{label} CANCELLED")
-                return False
-            tau = i / n                       # normalized time 0..1
-            # quintic minimum-jerk time scaling: s(0)=0, s(1)=1,
-            # s'=s''=0 at both ends
-            s = 10 * tau**3 - 15 * tau**4 + 6 * tau**5
-            q_t = q0 + s * (target - q0)
-            js = JointState()
-            js.header.stamp = self.get_clock().now().to_msg()
-            js.name = list(self.arm_joints)
-            js.position = [float(v) for v in q_t]
-            self._joint_cmd_pub.publish(js)
-            # keep a steady cadence relative to the start (no drift)
-            next_t = t0 + i * dt
-            sleep = next_t - time.monotonic()
-            if sleep > 0:
-                time.sleep(sleep)
-        # small settle so the last waypoint is reached before returning
-        time.sleep(0.3)
-        return True
+        ok = self.client.move_to_joint_values(target)
+        return bool(ok and not self._cancel.is_set())
 
     def _gripper(self, which: str, label: str = "") -> bool:
-        """Open/close via the teleop's /gripper_cmd — the SAME code path as
-        the remote button, so the current-based grasp state machine engages
-        exactly like the (working) remote grasp."""
+        """Open/close through the always-active GripperActionController."""
         which = which.strip().lower()
-        s = String()
-        s.data = which
         self._status_line = f"gripper {label or which.upper()}"
         self.get_logger().info(self._status_line)
-        self._gripper_cmd_pub.publish(s)
-        time.sleep(float(self.get_parameter("gripper_settle_s").value))
-        return True
+        position = float(self.get_parameter(
+            "gripper_open" if which == "open" else "gripper_close").value)
+        return self.client.set_gripper(position, max_effort=0.0)
 
     # ---------------- sequence ----------------
     def _approach_only(self) -> bool:
@@ -522,35 +463,9 @@ class DirectPickNode(Node):
         return True
 
     def _track_worker(self) -> None:
-        """Continuously hover the arm in front of the object, CHASING it as it
-        moves (incl. lateral/y). Re-localises every cycle and streams the
-        hover pose to the arm server's /arm_cart_track target."""
-        try:
-            self._send_joint_pose(self.get_parameter("ready_pose").value, "ready")
-            self._gripper("open", "OPEN")
-            rate = max(1.0, float(self.get_parameter("track_rate").value))
-            dt = 1.0 / rate
-            standoff, zoff = self._approach_geom()
-            pitch = float(self.get_parameter("front_pitch").value)
-            min_z = float(self.get_parameter("min_z").value)
-            self._status_line = "TRACKING object"
-            self.get_logger().info("tracking started — chasing object")
-            while not self._cancel.is_set() and rclpy.ok():
-                found = self._tag_object_world(allow_stale=True)
-                if found is not None:
-                    _tw, obj_w, _R = found
-                    bearing = self._bearing(obj_w)
-                    yaw = math.atan2(obj_w[1], obj_w[0]) + \
-                        float(self.get_parameter("yaw_offset").value)
-                    hover = obj_w - standoff * bearing
-                    hover[2] = max(obj_w[2] + zoff, min_z)
-                    R = rpy_pose(pitch, yaw)
-                    self._publish_pose(self._track_pub, hover, R)
-                time.sleep(dt)
-        finally:
-            self._stop_pub.publish(String(data="stop"))
-            with self._run_lock:
-                self._busy = False
+        """Continuous Servo tracking was intentionally removed."""
+        with self._run_lock:
+            self._busy = False
 
     def _publish_pose(self, pub, pos, R) -> None:
         msg = PoseStamped()
@@ -565,7 +480,7 @@ class DirectPickNode(Node):
         msg.pose.orientation.w = qw
         pub.publish(msg)
 
-    def _preempt(self) -> None:
+    def _preempt(self) -> bool:
         """Cancel any running sequence and wait for its worker to exit, so a
         new command can start immediately (e.g. re-running APPROACH after
         changing an offset — no 'sequence already running' rejection)."""
@@ -577,7 +492,12 @@ class DirectPickNode(Node):
             self._cancel.set()
             if th is not None and th.is_alive():
                 th.join(timeout=3.0)
+            if th is not None and th.is_alive():
+                self.get_logger().warn(
+                    "current MoveGroup goal is still finishing; new command rejected")
+                return False
         self._cancel.clear()
+        return True
 
     def _worker(self, approach_only: bool) -> None:
         try:
@@ -593,7 +513,8 @@ class DirectPickNode(Node):
                 self._busy = False
 
     def _start(self, approach_only: bool) -> bool:
-        self._preempt()
+        if not self._preempt():
+            return False
         with self._run_lock:
             if self._busy:
                 return False
@@ -624,27 +545,19 @@ class DirectPickNode(Node):
         return res
 
     def _on_track(self, req, res):
-        self._preempt()
-        with self._run_lock:
-            if self._busy:
-                res.success = False
-                res.message = "sequence already running"
-                return res
-            self._busy = True
-            self._cancel.clear()
-        self._worker_thread = threading.Thread(
-            target=self._track_worker, daemon=True)
-        self._worker_thread.start()
-        res.success = True
-        res.message = "tracking started — arm chases the object (incl. y)"
+        res.success = False
+        res.message = (
+            "continuous tracking was a MoveIt Servo feature and is disabled; "
+            "use /direct_approach for a planned snapshot target")
         return res
 
     def _on_stop(self, req, res):
-        self._preempt()
-        self._stop_pub.publish(String(data="stop"))
+        stopped = self._preempt()
         self._status_line = "stopped"
-        res.success = True
-        res.message = "stopped tracking / motion"
+        res.success = stopped
+        res.message = (
+            "stopped" if stopped
+            else "cancel requested; current MoveGroup goal is still finishing")
         return res
 
     def _reach_tick(self) -> None:
@@ -697,7 +610,8 @@ class DirectPickNode(Node):
                 self._busy = False
 
     def _start_go_pose(self, pose, label: str) -> bool:
-        self._preempt()
+        if not self._preempt():
+            return False
         with self._run_lock:
             if self._busy:
                 return False
@@ -730,7 +644,7 @@ class DirectPickNode(Node):
     def _grip_srv(self, req, res, which: str):
         self._gripper(which, which.upper() + " (test)")
         res.success = True
-        res.message = f"gripper {which} (via teleop /gripper_cmd, like remote)"
+        res.message = f"gripper {which} via GripperActionController"
         return res
 
     def _on_status(self, req, res):

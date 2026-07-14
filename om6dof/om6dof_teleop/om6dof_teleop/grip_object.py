@@ -1,24 +1,14 @@
-"""Dedicated grasp routine for the OpenManipulator Chain gripper (ID 37).
+"""Close the OM6DOF gripper and detect an object from motor current.
 
-Slowly closes the gripper toward the CLOSE target while watching the motor's
-Present Current. As soon as the current stays above a threshold for a few
-consecutive reads — i.e. the jaws pressed onto something — motion stops and the
-gripper HOLDS at that position (a soft, current-limited grasp). If the target
-is reached with no current spike, the jaws are empty and simply closed fully.
+The Dynamixel bus is owned exclusively by ``om6dof_bringup``.  This utility
+uses only standard ROS 2 interfaces:
 
-This talks to the Dynamixel bus directly (dynamixel_sdk, Protocol 2.0), the
-same way teleop_node does. It therefore needs EXCLUSIVE access to the serial
-port: stop om6dof_teleop teleop before running this, or they will fight over
-/dev/ttyUSB0.
+* ``/gripper_controller/gripper_cmd`` (``control_msgs/GripperCommand``) for
+  position commands; and
+* ``/joint_states`` for the measured gripper position and Present Current.
 
-Run standalone:
-    python3 -m om6dof_teleop.grip_object
-or via the installed console script:
-    ros2 run om6dof_teleop grip_object -- --current-threshold 120
-
-Detection is torque-based (Present Current, addr 126). No extra sensor needed —
-an empty jaw reaches CLOSE freely (low current); a jaw pressing on an object
-stalls before CLOSE and current rises.
+The bringup maps Dynamixel ``Present Current`` to the joint's ``effort`` state
+and overrides the gripper scale so that value is already expressed in mA.
 """
 
 from __future__ import annotations
@@ -27,275 +17,299 @@ import argparse
 import math
 import sys
 import time
-from typing import Optional
+from dataclasses import dataclass
+from typing import Optional, Sequence
 
-from dynamixel_sdk import PortHandler, PacketHandler, COMM_SUCCESS
-
-
-# ---------- XM430 control table (Protocol 2.0) ----------
-ADDR_OPERATING_MODE = 11        # 1 byte
-ADDR_TORQUE_ENABLE = 64         # 1 byte
-ADDR_PROFILE_ACCEL = 108        # 4 bytes
-ADDR_PROFILE_VELOCITY = 112     # 4 bytes
-ADDR_GOAL_POSITION = 116        # 4 bytes
-ADDR_PRESENT_CURRENT = 126      # 2 bytes, signed
-ADDR_PRESENT_POSITION = 132     # 4 bytes, signed
-
-OP_MODE_POSITION = 3
-PROTOCOL_VERSION = 2.0
-TICKS_PER_REV = 4096
-TICK_RAD = 2.0 * math.pi / TICKS_PER_REV
-# XM430-W350 current unit: 2.69 mA per raw tick.
-CURRENT_UNIT_MA = 2.69
+import rclpy
+from control_msgs.action import GripperCommand
+from rclpy.action import ActionClient
+from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from rclpy.task import Future
+from rclpy.utilities import remove_ros_args
+from sensor_msgs.msg import JointState
 
 
-def rad_to_ticks(r: float) -> int:
-    return int(round(2048 + r / TICK_RAD))
+@dataclass
+class GripperSample:
+    position: float
+    current_effort: float
+    stamp_monotonic: float
+    sequence: int
 
-
-def ticks_to_rad(t: int) -> float:
-    return (t - 2048) * TICK_RAD
-
-
-def _s16(v: int) -> int:
-    return v - (1 << 16) if v >= (1 << 15) else v
-
-
-def _s32(v: int) -> int:
-    return v - (1 << 32) if v >= (1 << 31) else v
+    @property
+    def valid(self) -> bool:
+        return math.isfinite(self.position) and math.isfinite(self.current_effort)
 
 
 class GripError(RuntimeError):
-    pass
+    """Raised when the ROS gripper interface cannot complete a grasp."""
 
 
-class Gripper:
-    def __init__(self, device: str, baud: int, motor_id: int) -> None:
-        self.motor_id = motor_id
-        self.port = PortHandler(device)
-        self.packet = PacketHandler(PROTOCOL_VERSION)
-        if not self.port.openPort():
-            raise GripError(f"failed to open {device}")
-        if not self.port.setBaudRate(baud):
-            raise GripError(f"failed to set baud {baud}")
-        _, rc, err = self.packet.ping(self.port, motor_id)
-        if rc != COMM_SUCCESS or err != 0:
-            raise GripError(
-                f"gripper ID {motor_id} did not respond "
-                f"(rc={rc} err={err}); check 12V power / U2D2 / daisy chain"
-            )
+class GripperClient(Node):
+    def __init__(
+        self,
+        joint_name: str,
+        joint_states_topic: str,
+        action_name: str,
+        current_unit_ma: float,
+        verbose: bool,
+    ) -> None:
+        super().__init__("om6dof_grip_object")
+        self.joint_name = joint_name
+        self.current_unit_ma = current_unit_ma
+        self.verbose = verbose
+        self.sample: Optional[GripperSample] = None
+        self._sample_sequence = 0
 
-    # ---- low-level ----
-    def _w1(self, addr: int, val: int) -> None:
-        rc, err = self.packet.write1ByteTxRx(self.port, self.motor_id, addr, val & 0xFF)
-        if rc != COMM_SUCCESS or err != 0:
-            raise GripError(f"write1 addr={addr}: rc={rc} err={err}")
-
-    def _w4(self, addr: int, val: int) -> None:
-        rc, err = self.packet.write4ByteTxRx(
-            self.port, self.motor_id, addr, val & 0xFFFFFFFF
+        self.create_subscription(
+            JointState,
+            joint_states_topic,
+            self._on_joint_state,
+            qos_profile_sensor_data,
         )
-        if rc != COMM_SUCCESS or err != 0:
-            raise GripError(f"write4 addr={addr}: rc={rc} err={err}")
+        self.action = ActionClient(self, GripperCommand, action_name)
 
-    def present_position_rad(self) -> float:
-        raw, rc, err = self.packet.read4ByteTxRx(
-            self.port, self.motor_id, ADDR_PRESENT_POSITION
-        )
-        if rc != COMM_SUCCESS or err != 0:
-            raise GripError(f"read position: rc={rc} err={err}")
-        return ticks_to_rad(_s32(raw))
-
-    def present_current_ma(self) -> float:
-        raw, rc, err = self.packet.read2ByteTxRx(
-            self.port, self.motor_id, ADDR_PRESENT_CURRENT
-        )
-        if rc != COMM_SUCCESS or err != 0:
-            raise GripError(f"read current: rc={rc} err={err}")
-        return _s16(raw) * CURRENT_UNIT_MA
-
-    def write_goal_rad(self, r: float) -> None:
-        self._w4(ADDR_GOAL_POSITION, rad_to_ticks(r) & 0xFFFFFFFF)
-
-    # ---- setup ----
-    def prepare(self, profile_vel: int, profile_acc: int) -> None:
-        """Position mode, slow profile, torque on, goal preloaded to present so
-        the jaw does not snap when torque engages."""
-        self._w1(ADDR_TORQUE_ENABLE, 0)
-        self._w1(ADDR_OPERATING_MODE, OP_MODE_POSITION)
-        self._w4(ADDR_PROFILE_VELOCITY, profile_vel)
-        self._w4(ADDR_PROFILE_ACCEL, profile_acc)
-        self.write_goal_rad(self.present_position_rad())
-        self._w1(ADDR_TORQUE_ENABLE, 1)
-
-    def close(self) -> None:
+    def _on_joint_state(self, msg: JointState) -> None:
         try:
-            self.port.closePort()
-        except Exception:
-            pass
+            index = msg.name.index(self.joint_name)
+        except ValueError:
+            return
+
+        # A current measurement is mandatory for this utility.  Do not silently
+        # treat a missing effort array as zero because that would report an
+        # obstructed or disconnected gripper as an empty grasp.
+        if index >= len(msg.position) or index >= len(msg.effort):
+            return
+
+        self._sample_sequence += 1
+        self.sample = GripperSample(
+            position=float(msg.position[index]),
+            current_effort=float(msg.effort[index]),
+            stamp_monotonic=time.monotonic(),
+            sequence=self._sample_sequence,
+        )
+
+    def current_ma(self, sample: GripperSample) -> float:
+        return abs(sample.current_effort) * self.current_unit_ma
+
+    def wait_for_interfaces(self, timeout: float) -> GripperSample:
+        deadline = time.monotonic() + timeout
+        while rclpy.ok() and time.monotonic() < deadline:
+            if self.action.server_is_ready() and self.sample is not None and self.sample.valid:
+                return self.sample
+            rclpy.spin_once(self, timeout_sec=0.05)
+
+        missing = []
+        if not self.action.server_is_ready():
+            missing.append("GripperCommand action server")
+        if self.sample is None or not self.sample.valid:
+            missing.append(f"{self.joint_name} position/effort in /joint_states")
+        raise GripError("timed out waiting for " + " and ".join(missing))
+
+    def wait_future(self, future: Future, timeout: float, description: str):
+        deadline = time.monotonic() + timeout
+        while rclpy.ok() and not future.done() and time.monotonic() < deadline:
+            rclpy.spin_once(self, timeout_sec=0.05)
+        if not future.done():
+            raise GripError(f"timed out waiting for {description}")
+        exception = future.exception()
+        if exception is not None:
+            raise GripError(f"{description} failed: {exception}")
+        return future.result()
+
+    def send_goal(self, position: float, max_effort: float, timeout: float):
+        goal = GripperCommand.Goal()
+        goal.command.position = float(position)
+        goal.command.max_effort = float(max_effort)
+        handle = self.wait_future(
+            self.action.send_goal_async(goal), timeout, "gripper goal acceptance"
+        )
+        if handle is None or not handle.accepted:
+            raise GripError("gripper controller rejected the goal")
+        return handle
+
+    def hold_position(self, position: float, max_effort: float, timeout: float) -> None:
+        # Sending the hold goal also preempts a still-running close goal.  The
+        # returned goal handle only confirms acceptance; controller_manager
+        # remains alive after this short-lived utility exits and keeps holding.
+        self.send_goal(position, max_effort, timeout)
+
+    def log_sample(self, sample: GripperSample, over: int) -> None:
+        if self.verbose:
+            self.get_logger().info(
+                f"position={sample.position:+.5f} m, "
+                f"current={self.current_ma(sample):6.1f} mA, over={over}"
+            )
 
 
 def grasp(
-    g: Gripper,
+    node: GripperClient,
     close_target: float,
-    step_rad: float,
-    rate_hz: float,
     current_threshold_ma: float,
     consecutive: int,
-    settle_ma: float,
-    warmup_ticks: int,
-    log,
+    settle_current_ma: float,
+    warmup_seconds: float,
+    settle_seconds: float,
+    motion_timeout: float,
+    state_timeout: float,
+    max_effort: float,
 ) -> dict:
-    """Step the gripper toward `close_target`, monitoring current.
-
-    Returns a dict describing the outcome:
-        {"object": bool, "position": rad, "current": mA, "reason": str}
-    """
-    dt = 1.0 / rate_hz
-    start = g.present_position_rad()
-    # closing direction: sign that moves `start` toward `close_target`
-    direction = 1.0 if close_target >= start else -1.0
-    cmd = start
-    over = 0
-    peak = 0.0
-    tick = 0
-
-    log(
-        f"grasp start: pos={start:+.3f} rad → target={close_target:+.3f} rad "
-        f"(dir={'+' if direction > 0 else '-'}, "
-        f"threshold={current_threshold_ma:.0f} mA)"
+    """Command one close motion and stop it when sustained current is detected."""
+    initial = node.wait_for_interfaces(state_timeout)
+    node.get_logger().info(
+        f"grasp start: {initial.position:+.5f} m -> {close_target:+.5f} m; "
+        f"threshold={current_threshold_ma:.0f} mA"
     )
+    close_handle = node.send_goal(close_target, max_effort, state_timeout)
+    result_future = close_handle.get_result_async()
 
-    while True:
-        # advance commanded goal one step toward the target, without overshoot
-        remaining = close_target - cmd
-        if abs(remaining) <= step_rad:
-            cmd = close_target
-            reached = True
-        else:
-            cmd += direction * step_rad
-            reached = False
-        g.write_goal_rad(cmd)
+    started = time.monotonic()
+    deadline = started + motion_timeout
+    last_sequence = initial.sequence
+    over = 0
+    peak_ma = 0.0
 
-        time.sleep(dt)
-        tick += 1
+    while rclpy.ok() and time.monotonic() < deadline:
+        rclpy.spin_once(node, timeout_sec=0.05)
+        sample = node.sample
+        if sample is None or sample.sequence == last_sequence:
+            continue
+        last_sequence = sample.sequence
+        if time.monotonic() - sample.stamp_monotonic > state_timeout:
+            raise GripError("gripper joint state became stale")
 
-        pos = g.present_position_rad()
-        cur = abs(g.present_current_ma())
-        peak = max(peak, cur)
-
-        # ignore the initial acceleration current spike
-        if tick > warmup_ticks and cur > current_threshold_ma:
+        current_ma = node.current_ma(sample)
+        peak_ma = max(peak_ma, current_ma)
+        if time.monotonic() - started >= warmup_seconds and current_ma > current_threshold_ma:
             over += 1
         else:
             over = 0
-
-        log(
-            f"  t={tick:3d} cmd={cmd:+.3f} pos={pos:+.3f} "
-            f"cur={cur:6.1f} mA over={over}",
-            debug=True,
-        )
+        node.log_sample(sample, over)
 
         if over >= consecutive:
-            # object is resisting the jaws — hold right here
-            g.write_goal_rad(pos)
+            cancel = close_handle.cancel_goal_async()
+            # Cancellation is best effort.  The subsequent accepted hold goal
+            # is what deterministically preempts the close command.
+            try:
+                node.wait_future(cancel, state_timeout, "close-goal cancellation")
+            except GripError as exc:
+                node.get_logger().warning(str(exc))
+            node.hold_position(sample.position, max_effort, state_timeout)
             return {
                 "object": True,
-                "position": pos,
-                "current": cur,
-                "reason": f"current {cur:.0f} mA > {current_threshold_ma:.0f} mA "
-                          f"for {consecutive} reads",
+                "position": sample.position,
+                "current": current_ma,
+                "peak": peak_ma,
+                "reason": (
+                    f"current {current_ma:.0f} mA > {current_threshold_ma:.0f} mA "
+                    f"for {consecutive} samples"
+                ),
             }
 
-        if reached:
-            # commanded goal is at target; wait for the jaw to settle, then
-            # decide: low current + at target = empty (fully closed).
-            time.sleep(0.15)
-            cur = abs(g.present_current_ma())
-            pos = g.present_position_rad()
-            if cur > settle_ma:
-                g.write_goal_rad(pos)
-                return {
-                    "object": True,
-                    "position": pos,
-                    "current": cur,
-                    "reason": f"reached target but holding {cur:.0f} mA "
-                              f"(> {settle_ma:.0f} mA settle) — object at full close",
-                }
-            return {
-                "object": False,
-                "position": pos,
-                "current": cur,
-                "reason": "reached CLOSE target with low current — jaw empty",
-            }
+        if result_future.done():
+            break
+
+    if not result_future.done():
+        close_handle.cancel_goal_async()
+        sample = node.sample
+        if sample is not None:
+            node.hold_position(sample.position, max_effort, state_timeout)
+        raise GripError(f"gripper did not finish within {motion_timeout:.1f} s")
+
+    result = node.wait_future(result_future, state_timeout, "gripper result")
+    if result is None:
+        raise GripError("gripper action returned no result")
+
+    # Continue sampling briefly after the action reaches its target.  Current
+    # at rest distinguishes an empty fully-closed jaw from an object that sits
+    # at the mechanical close position.
+    settle_deadline = time.monotonic() + settle_seconds
+    final = node.sample
+    while rclpy.ok() and time.monotonic() < settle_deadline:
+        rclpy.spin_once(node, timeout_sec=min(0.05, settle_deadline - time.monotonic()))
+        if node.sample is not None:
+            final = node.sample
+            peak_ma = max(peak_ma, node.current_ma(final))
+    if final is None or time.monotonic() - final.stamp_monotonic > state_timeout:
+        raise GripError("no fresh gripper state after action completion")
+
+    current_ma = node.current_ma(final)
+    object_detected = current_ma > settle_current_ma
+    if object_detected:
+        node.hold_position(final.position, max_effort, state_timeout)
+    return {
+        "object": object_detected,
+        "position": final.position,
+        "current": current_ma,
+        "peak": peak_ma,
+        "reason": (
+            f"settled current {current_ma:.0f} mA > {settle_current_ma:.0f} mA"
+            if object_detected
+            else "reached close target with low current; jaw is empty"
+        ),
+    }
 
 
-def main(argv: Optional[list] = None) -> int:
-    p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--device", default="/dev/ttyUSB0")
-    p.add_argument("--baud", type=int, default=1_000_000)
-    p.add_argument("--id", type=int, default=37, help="gripper Dynamixel ID")
-    p.add_argument("--close-target", type=float, default=0.0,
-                   help="fully-closed jaw position (rad)")
-    p.add_argument("--step", type=float, default=0.004,
-                   help="rad advanced per control tick (smaller = slower/gentler)")
-    p.add_argument("--rate", type=float, default=50.0, help="control loop Hz")
-    p.add_argument("--current-threshold", type=float, default=120.0,
-                   help="present current (mA) that counts as 'holding an object'")
-    p.add_argument("--consecutive", type=int, default=3,
-                   help="consecutive over-threshold reads before declaring a grasp")
-    p.add_argument("--settle-current", type=float, default=60.0,
-                   help="mA at full close that still counts as an object")
-    p.add_argument("--profile-vel", type=int, default=30,
-                   help="Dynamixel Profile Velocity (caps jaw speed)")
-    p.add_argument("--profile-acc", type=int, default=10)
-    p.add_argument("--warmup-ticks", type=int, default=5,
-                   help="ticks to ignore before current is trusted")
-    p.add_argument("--release-torque", action="store_true",
-                   help="disable torque on exit instead of holding the grasp")
-    p.add_argument("--verbose", "-v", action="store_true",
-                   help="print every control tick")
-    args = p.parse_args(argv)
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--joint", default="gripper_left_joint")
+    parser.add_argument("--joint-states", default="/joint_states")
+    parser.add_argument("--action", default="/gripper_controller/gripper_cmd")
+    parser.add_argument("--close-target", type=float, default=-0.010,
+                        help="fully closed prismatic position in metres")
+    parser.add_argument("--current-threshold", type=float, default=120.0,
+                        help="sustained Present Current threshold in mA")
+    parser.add_argument("--settle-current", type=float, default=60.0,
+                        help="current at the close target that still means object")
+    parser.add_argument("--current-unit-ma", type=float, default=1.0,
+                        help="mA per effort unit (default 1: bringup exports mA)")
+    parser.add_argument("--consecutive", type=int, default=3)
+    parser.add_argument("--warmup-seconds", type=float, default=0.10)
+    parser.add_argument("--settle-seconds", type=float, default=0.15)
+    parser.add_argument("--motion-timeout", type=float, default=10.0)
+    parser.add_argument("--state-timeout", type=float, default=2.0)
+    parser.add_argument("--max-effort", type=float, default=0.0,
+                        help="GripperCommand max_effort (0 lets the controller use its limit)")
+    parser.add_argument("--verbose", "-v", action="store_true")
+    return parser
 
-    def log(msg: str, debug: bool = False) -> None:
-        if debug and not args.verbose:
-            return
-        print(msg, flush=True)
 
-    g: Optional[Gripper] = None
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    ros_argv = list(sys.argv if argv is None else argv)
+    cli_argv = remove_ros_args(args=ros_argv)[1:] if argv is None else list(argv)
+    args = _parser().parse_args(cli_argv)
+    if args.current_unit_ma <= 0.0 or args.consecutive < 1:
+        _parser().error("current-unit-ma must be positive and consecutive must be >= 1")
+
+    rclpy.init(args=ros_argv if argv is None else None)
+    node = GripperClient(
+        args.joint,
+        args.joint_states,
+        args.action,
+        args.current_unit_ma,
+        args.verbose,
+    )
     try:
-        g = Gripper(args.device, args.baud, args.id)
-        g.prepare(args.profile_vel, args.profile_acc)
         result = grasp(
-            g,
+            node,
             close_target=args.close_target,
-            step_rad=args.step,
-            rate_hz=args.rate,
             current_threshold_ma=args.current_threshold,
             consecutive=args.consecutive,
-            settle_ma=args.settle_current,
-            warmup_ticks=args.warmup_ticks,
-            log=log,
+            settle_current_ma=args.settle_current,
+            warmup_seconds=args.warmup_seconds,
+            settle_seconds=args.settle_seconds,
+            motion_timeout=args.motion_timeout,
+            state_timeout=args.state_timeout,
+            max_effort=args.max_effort,
         )
-        if result["object"]:
-            print(
-                f"\n✅ OBJECT GRASPED — holding at {result['position']:+.3f} rad, "
-                f"{result['current']:.0f} mA\n   ({result['reason']})",
-                flush=True,
-            )
-        else:
-            print(
-                f"\n⚪ NO OBJECT — jaw closed to {result['position']:+.3f} rad, "
-                f"{result['current']:.0f} mA\n   ({result['reason']})",
-                flush=True,
-            )
-
-        if args.release_torque:
-            g._w1(ADDR_TORQUE_ENABLE, 0)
-            print("torque released.", flush=True)
-        else:
-            print("holding grasp (torque stays ON). Ctrl-C to exit.", flush=True)
-
+        label = "OBJECT GRASPED" if result["object"] else "NO OBJECT"
+        print(
+            f"{label}: position={result['position']:+.5f} m, "
+            f"current={result['current']:.0f} mA, peak={result['peak']:.0f} mA "
+            f"({result['reason']})",
+            flush=True,
+        )
         return 0 if result["object"] else 2
     except GripError as exc:
         print(f"ERROR: {exc}", file=sys.stderr, flush=True)
@@ -303,8 +317,9 @@ def main(argv: Optional[list] = None) -> int:
     except KeyboardInterrupt:
         return 130
     finally:
-        if g is not None:
-            g.close()
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

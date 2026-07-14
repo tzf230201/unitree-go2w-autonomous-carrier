@@ -1,6 +1,7 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, RegisterEventHandler
+from launch.actions import DeclareLaunchArgument, EmitEvent, RegisterEventHandler
 from launch.event_handlers import OnProcessExit
+from launch.events import Shutdown
 from launch.substitutions import Command, FindExecutable, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
@@ -50,8 +51,27 @@ def generate_launch_description():
         package="controller_manager", executable="spawner",
         arguments=["gripper_controller", "--controller-manager", "/controller_manager"],
     )
+    forward_position_spawner = Node(
+        package="controller_manager", executable="spawner",
+        arguments=[
+            "forward_position_controller",
+            "--controller-manager", "/controller_manager",
+            "--inactive",
+        ],
+    )
     start_motion_controllers = RegisterEventHandler(
-        OnProcessExit(target_action=joint_state_spawner, on_exit=[arm_spawner, gripper_spawner])
+        OnProcessExit(
+            target_action=joint_state_spawner,
+            on_exit=[arm_spawner, gripper_spawner, forward_position_spawner],
+        )
+    )
+    stop_launch_if_hardware_exits = RegisterEventHandler(
+        OnProcessExit(
+            target_action=control_node,
+            on_exit=[EmitEvent(event=Shutdown(
+                reason="ros2_control hardware owner exited",
+            ))],
+        )
     )
 
     return LaunchDescription([
@@ -62,4 +82,5 @@ def generate_launch_description():
         control_node,
         joint_state_spawner,
         start_motion_controllers,
+        stop_launch_if_hardware_exits,
     ])

@@ -118,7 +118,7 @@ class CalibGui(Node):
         self._tf_buffer = Buffer()
         self._tf_listener = TransformListener(self._tf_buffer, self)
 
-        # ---- self-FK fallback (no MoveIt / no TF: the direct_pick flow) ----
+        # ---- self-FK fallback if the Servo stack's TF is unavailable ----
         # If TF world->end_effector_link isn't published, compute it ourselves
         # from /joint_states with the same PyKDL solver, so the world-object
         # readout works with ONLY the teleop arm server running.
@@ -130,7 +130,7 @@ class CalibGui(Node):
         self._latest_q = None
         self._ik = None
         try:
-            from om6dof_teleop.ik_solver import IKSolver
+            from om6dof_controller.ik_solver import IKSolver
             self._ik = IKSolver()
             self.create_subscription(
                 JointState, "/joint_states", self._on_joints, 10)
@@ -148,7 +148,7 @@ class CalibGui(Node):
         self._search_cli = self.create_client(Trigger, "/run_search")
         self._approach_cli = self.create_client(Trigger, "/run_front_approach")
         self._status_cli = self.create_client(Trigger, "/tag_pick_status")
-        # direct (no-MoveIt) pick flow
+        # direct target-through-Servo pick flow
         self._direct_run_cli = self.create_client(Trigger, "/run_direct_pick")
         self._direct_approach_cli = self.create_client(Trigger, "/direct_approach")
         self._direct_status_cli = self.create_client(Trigger, "/direct_pick_status")

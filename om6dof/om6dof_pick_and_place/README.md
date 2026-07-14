@@ -1,7 +1,7 @@
 # om6dof_pick_and_place
 
 Pick-and-place state machine for the 6-DOF OM6DOF. Sits on top
-of `om6dof_moveit_config` (MoveIt 2) and `om6dof_bringup` (hardware control), and
+of `om6dof_moveit_config` (MoveIt 2) and
 [`om6dof_bringup`](../om6dof_bringup/) (ros2_control + Dynamixels), and
 drives a configurable waypoint sequence through the `MoveGroup` action.
 
@@ -115,7 +115,7 @@ colcon build --packages-select om6dof_pick_and_place --symlink-install
 source install/setup.bash
 ```
 
-`ament_python` package; depends on `om6dof_bringup`, `om6dof_bringup`,
+`ament_python` package; depends on `om6dof_bringup`,
 `rclpy`, `moveit_msgs`, `control_msgs`, `std_srvs`, `sensor_msgs`, `geometry_msgs`.
 
 ---
@@ -125,9 +125,9 @@ source install/setup.bash
 You need the full MoveIt stack up first. Two terminals:
 
 ```bash
-# Terminal 1 — hardware + move_group + RViz
-sudo systemctl stop go2w-arm-launcher.service     # release /dev/ttyUSB0
-ros2 launch om6dof_bringup real.launch.py
+# Terminal 1 — reuse permanent hardware; add move_group + RViz
+sudo systemctl start om6dof-hardware.service
+ros2 launch om6dof_bringup real.launch.py start_hardware:=false
 # Wait for "You can start planning now!"
 ```
 
@@ -218,8 +218,8 @@ ros2 launch om6dof_pick_and_place pick_place.launch.py \
 
 1. **Power-on, launch MoveIt:**
    ```bash
-   sudo systemctl stop go2w-arm-launcher.service
-   ros2 launch om6dof_bringup real.launch.py
+   sudo systemctl start om6dof-hardware.service
+   ros2 launch om6dof_bringup real.launch.py start_hardware:=false
    ```
 
 2. **Launch this node with `auto_run:=false`** so it just waits:
@@ -288,9 +288,8 @@ the cube centre is 15 mm behind the visible tag plane.
 ```bash
 # camera is normally held by the web dashboard — release it first
 sudo systemctl stop go2w-web-monitor.service
-sudo systemctl stop go2w-arm-launcher.service     # release /dev/ttyUSB0
 
-# All-in-one: MoveIt stack + RViz + detector + tag picker + image viewer
+# MoveIt + detector reuse the permanent om6dof hardware service
 ros2 launch om6dof_pick_and_place tag_pick_place.launch.py
 
 # 1. verify the extrinsic: put the tag at a spot you can measure
@@ -334,7 +333,7 @@ approach (`grasp_pitch: 2.4` ≈ 45°) or move the tag closer to the arm.
   so the planner avoids them
 - **Hand-eye calibration** instead of ruler-measured `camera_xyz`/`camera_rpy`
   (e.g. tag held in the gripper at known EE poses)
-- Use **MoveIt Servo** for a Cartesian jog mode alongside the state machine
+- Add richer planning-scene objects for ordinary MoveGroup planning
 - Wrap the sequence in a **behavior tree** (`py_trees`, `behaviortree_cpp`)
   for retry / fallback / multi-object workflows
 
@@ -345,5 +344,6 @@ approach (`grasp_pitch: 2.4` ≈ 45°) or move the tag closer to the arm.
 - [`om6dof_bringup`](../om6dof_bringup/) — hardware bringup
 - `om6dof_moveit_config` — MoveIt 2 layer
 - `om6dof_bringup` — ros2_control hardware layer
-- [`om6dof_teleop`](../om6dof_teleop/) — direct-DXL teleop (no MoveIt) for
-  manual jogging when you don't need autonomy
+- [`om6dof_teleop`](../om6dof_teleop/) — JOINT/CARTESIAN/CYLINDRICAL remote
+  control with an exclusive ros2_control switch between remote and autonomous
+  arm ownership

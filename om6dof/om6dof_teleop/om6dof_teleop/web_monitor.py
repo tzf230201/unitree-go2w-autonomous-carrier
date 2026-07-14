@@ -5,16 +5,16 @@ on the same network. It shows:
 
   * Robot status  — hostname, IPs, uptime, load, RAM, CPU temp, ROS_DOMAIN_ID,
                     whether /dev/ttyUSB0 (the U2D2 arm bus) is present, and
-                    whether teleop is currently running.
+                    whether remote control currently owns the arm interfaces.
   * Nodes         — the live ROS 2 graph node list, with DUPLICATE node names
                     highlighted (two nodes with the same name = trouble).
   * Topics        — the live topic list with message types.
   * Camera        — a live MJPEG stream from the RealSense colour camera
                     (the device is released automatically when nobody is
                     watching, so it never blocks other users).
-  * Teleop toggle — a button that publishes a momentary F3 tap onto
-                    /wirelesscontroller, so the existing arm_launcher starts or
-                    stops teleop exactly as if you pressed F3 on the remote.
+  * Remote toggle — a button that publishes a momentary F3 tap onto
+                    /wirelesscontroller. F3 switches controller ownership
+                    between autonomous and remote control.
 
 The page itself refreshes ONLY when you reload / press Refresh (the camera is a
 separate live stream). Data is read on demand.
@@ -49,7 +49,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 
 from unitree_go.msg import WirelessController, LowState
-from std_msgs.msg import String
+from std_msgs.msg import Bool, String
 
 # unitree_api is only needed for the "Robot Agent" chat mode (direct motion
 # control). Import it softly so the dashboard still runs on machines that lack it.
@@ -60,7 +60,6 @@ except Exception:  # pragma: no cover
 
 
 BTN_F3 = 1 << 7
-TELEOP_NODE_NAME = "om6dof_teleop"
 ARM_BUS_DEVICE = "/dev/ttyUSB0"
 
 # Unitree sport-mode API ids (verified against the official Unitree ROS2
@@ -202,6 +201,9 @@ class MonitorNode(Node):
         self.pub_remote = self.create_publisher(
             WirelessController, "/wirelesscontroller", qos
         )
+        self.pub_operation_mode = self.create_publisher(
+            String, "/om6dof/operation_mode", 10
+        )
         # Sport-API publisher for chat-driven motion (Robot Agent mode). Only
         # created when unitree_api is available.
         self.pub_sport = (
@@ -212,8 +214,8 @@ class MonitorNode(Node):
         # previous one. _motion_gen bumps to signal the running loop to quit.
         self._motion_lock = threading.Lock()
         self._motion_gen = 0
-        # Latest gripper state (latched by teleop with TRANSIENT_LOCAL, so we
-        # match that QoS to receive the last value even if teleop started first).
+        # Controller/teleop state is TRANSIENT_LOCAL, so the dashboard receives
+        # the latest value even when it starts after the arm stack.
         self.gripper_state: Optional[str] = None
         grip_qos = QoSProfile(
             depth=1,
@@ -224,6 +226,20 @@ class MonitorNode(Node):
         self.create_subscription(
             String, "/om6dof_teleop/gripper_state", self._on_gripper, grip_qos
         )
+        self.remote_enabled: Optional[bool] = None
+        self.create_subscription(
+            Bool,
+            "/om6dof/remote_enabled/state",
+            self._on_remote_enabled,
+            grip_qos,
+        )
+        self.control_mode: Optional[str] = None
+        self.create_subscription(
+            String,
+            "/om6dof/operation_mode/state",
+            self._on_control_mode,
+            grip_qos,
+        )
         # Battery from /lowstate (~500 Hz). The callback only stores the latest
         # values — no processing — so it stays cheap.
         self.battery_soc: Optional[int] = None
@@ -233,6 +249,12 @@ class MonitorNode(Node):
 
     def _on_gripper(self, msg: String) -> None:
         self.gripper_state = msg.data
+
+    def _on_remote_enabled(self, msg: Bool) -> None:
+        self.remote_enabled = bool(msg.data)
+
+    def _on_control_mode(self, msg: String) -> None:
+        self.control_mode = msg.data.strip().upper()
 
     def _on_lowstate(self, msg: LowState) -> None:
         try:
@@ -250,12 +272,10 @@ class MonitorNode(Node):
         return sorted(self.get_topic_names_and_types(), key=lambda x: x[0])
 
     def teleop_running(self) -> bool:
-        return any(n == TELEOP_NODE_NAME for n, _ in self.get_node_names_and_namespaces())
+        return self.remote_enabled is True
 
     def tap_f3(self) -> None:
-        """Publish a momentary F3 press so arm_launcher toggles teleop. Only the
-        first message is a rising edge (launcher debounces the rest); a trailing
-        release (keys=0) restores the idle state."""
+        """Publish an F3 edge so ros2_control switches arm ownership."""
         m = WirelessController()
         for _ in range(5):
             m.keys = BTN_F3
@@ -263,6 +283,9 @@ class MonitorNode(Node):
             time.sleep(0.05)
         m.keys = 0
         self.pub_remote.publish(m)
+
+    def set_operation_mode(self, mode: str) -> None:
+        self.pub_operation_mode.publish(String(data=mode.strip().upper()))
 
     # ----------------------------------------------------------------------- #
     #  Sport-mode motion (chat "Robot Agent" mode)                            #
@@ -1003,7 +1026,7 @@ def status_fields(node) -> dict:
         key = f"{ns.rstrip('/')}/{name}" if ns not in ("", "/") else name
         counts[key] = counts.get(key, 0) + 1
     dups = sum(1 for c in counts.values() if c > 1)
-    teleop_on = counts.get(TELEOP_NODE_NAME, 0) > 0
+    teleop_on = node.remote_enabled is True
     running_llm = list_running_ollama()
     if running_llm:
         llm_cell = (f'<span class="pill warn">{html.escape(", ".join(running_llm))}</span>'
@@ -1018,7 +1041,11 @@ def status_fields(node) -> dict:
         "temp": html.escape(info["temp"]),
         "battery": battery_pill(node),
         "arm_bus": pill(info["arm_bus"], "present", "MISSING"),
-        "teleop": pill(teleop_on, "RUNNING", "stopped"),
+        "teleop": pill(teleop_on, "REMOTE ENABLED", "remote disabled"),
+        "control_mode": (
+            f'<span class="pill ok">{html.escape(node.control_mode)}</span>'
+            if node.control_mode else '<span class="pill warn">unknown</span>'
+        ),
         "gripper": gripper_pill(node.gripper_state),
         "llm": llm_cell,
         "dups": (f'<span class="pill bad">{dups} FOUND</span>' if dups
@@ -1036,7 +1063,7 @@ def render_page(node: MonitorNode, cam: CameraManager) -> str:
         key = f"{ns.rstrip('/')}/{name}" if ns not in ("", "/") else name
         counts[key] = counts.get(key, 0) + 1
     dups = {k: c for k, c in counts.items() if c > 1}
-    teleop_on = counts.get(TELEOP_NODE_NAME, 0) > 0
+    teleop_on = node.remote_enabled is True
 
     # --- status card (dynamic cells carry id="st_*" and are live-updated by
     # the poller script below hitting /status.json; static cells are plain) ---
@@ -1052,6 +1079,7 @@ def render_page(node: MonitorNode, cam: CameraManager) -> str:
         ("ROS_DOMAIN_ID", html.escape(str(info["domain_id"])), None),
         (f"Arm bus {ARM_BUS_DEVICE}", fields["arm_bus"], "arm_bus"),
         ("Teleop", fields["teleop"], "teleop"),
+        ("Arm control mode", fields["control_mode"], "control_mode"),
         ("Gripper", fields["gripper"], "gripper"),
         ("LLM loaded", fields["llm"], "llm"),
         ("Duplicate nodes", fields["dups"], "dups"),
@@ -1092,18 +1120,32 @@ def render_page(node: MonitorNode, cam: CameraManager) -> str:
     """
     teleop_html = f"""
     <div class="card">
-      <h2>🎮 Teleop control</h2>
-      <p>Status: {pill(teleop_on, "RUNNING", "stopped")}</p>
+      <h2>🎮 Remote control</h2>
+      <p>Status: {pill(teleop_on, "REMOTE ENABLED", "remote disabled")}</p>
       <div class="btnrow">
         <form class="inline" method="POST" action="/start_teleop">
-          <button type="submit">▶ Start teleop</button>
+          <button type="submit">▶ Enable remote</button>
         </form>
         <form class="inline" method="POST" action="/stop_teleop">
-          <button class="stop" type="submit">■ Stop teleop</button>
+          <button class="stop" type="submit">■ Disable remote</button>
         </form>
       </div>
-      <p class="small">Sends a momentary F3 to /wirelesscontroller — works even
-      with the physical remote OFF. Start takes ~10 s; Refresh to see new state.</p>
+      <div class="btnrow">
+        <form class="inline" method="POST" action="/mode_joint">
+          <button type="submit">JOINT</button>
+        </form>
+        <form class="inline" method="POST" action="/mode_cartesian">
+          <button type="submit">CARTESIAN</button>
+        </form>
+        <form class="inline" method="POST" action="/mode_cylindrical">
+          <button type="submit">CYLINDRICAL</button>
+        </form>
+      </div>
+      <p class="small">Sends a momentary F3 to /wirelesscontroller. Remote ON
+      activates the forward position controller and ramps the arm to READY in
+      JOINT mode; Remote OFF restores the trajectory controller for autonomous
+      MoveIt execution. Select on the remote cycles JOINT → CARTESIAN →
+      CYLINDRICAL.</p>
     </div>
     """
 
@@ -1251,21 +1293,29 @@ def make_handler(node: MonitorNode, cam: CameraManager):
             self.end_headers()
 
         def do_POST(self):
+            if self.path in (
+                "/mode_joint", "/mode_cartesian", "/mode_cylindrical"
+            ):
+                mode = self.path.removeprefix("/mode_").upper()
+                node.set_operation_mode(mode)
+                node.flash = f"Operation mode request sent: {mode}."
+                node.get_logger().info(node.flash)
+                return self._redirect_home()
             if self.path in ("/start_teleop", "/stop_teleop", "/toggle_teleop"):
                 want_start = self.path == "/start_teleop"
                 want_stop = self.path == "/stop_teleop"
                 running = node.teleop_running()
                 try:
                     if want_start and running:
-                        node.flash = "Teleop already running."
+                        node.flash = "Remote arm ownership is already enabled."
                     elif want_stop and not running:
-                        node.flash = "Teleop is not running."
+                        node.flash = "Remote arm ownership is already disabled."
                     else:
                         node.tap_f3()
                         node.flash = (
-                            "F3 sent → starting teleop (~10 s, then Refresh)."
+                            "F3 sent → requesting remote arm ownership."
                             if (want_start or (not running and not want_stop))
-                            else "F3 sent → stopping teleop."
+                            else "F3 sent → returning arm ownership to autonomy."
                         )
                 except Exception as exc:
                     node.flash = f"teleop control failed: {exc}"

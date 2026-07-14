@@ -1,0 +1,27 @@
+[Unit]
+Description=OM6DOF hardware + command converter + Go2W input adapter
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=unitree
+Group=dialout
+Environment=HOME=/home/unitree
+# full_stack includes exactly one om6dof_bringup hardware owner plus
+# om6dof_controller and the lightweight teleop adapter. F3 asks the controller
+# to swap arm_controller with forward_position_controller and enter READY.
+# JOINT/CARTESIAN/CYLINDRICAL all resolve in om6dof_controller; no second
+# process ever opens U2D2 or publishes final arm positions.
+# Source the Unitree environment explicitly.  Non-interactive shells return
+# from ~/.bashrc before its Unitree setup line, otherwise this service silently
+# falls back to Fast DDS while Go2W and interactive terminals use Cyclone DDS.
+ExecStart=/bin/bash -c 'set -e; source /home/unitree/unitree_ros2/setup.sh; source /home/unitree/ros2_ws/install/setup.bash; exec ros2 launch om6dof_teleop full_stack.launch.py'
+KillMode=control-group
+KillSignal=SIGINT
+TimeoutStopSec=20
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,6 +1,7 @@
+"""Canonical runtime: hardware owner -> command converter -> input adapter."""
+
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, TimerAction
-from launch.conditions import IfCondition
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.substitutions import FindPackageShare
@@ -9,25 +10,32 @@ from launch_ros.substitutions import FindPackageShare
 def generate_launch_description():
     hardware = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(PathJoinSubstitution([
-            FindPackageShare("om6dof_bringup"), "launch", "hardware.launch.py"
+            FindPackageShare("om6dof_bringup"), "launch", "hardware.launch.py",
         ])),
         launch_arguments={
             "port_name": LaunchConfiguration("port_name"),
             "baud_rate": LaunchConfiguration("baud_rate"),
             "use_fake_hardware": LaunchConfiguration("use_fake_hardware"),
         }.items(),
-        condition=IfCondition(LaunchConfiguration("start_hardware")),
     )
-    moveit = TimerAction(period=3.0, actions=[IncludeLaunchDescription(
+    controller = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(PathJoinSubstitution([
-            FindPackageShare("om6dof_moveit_config"),
-            "launch", "om6dof_moveit.launch.py",
+            FindPackageShare("om6dof_controller"), "launch", "controller.launch.py",
         ])),
         launch_arguments={
-            "start_rviz": LaunchConfiguration("start_rviz"),
-            "use_sim": LaunchConfiguration("use_sim"),
+            "remote_enabled_on_start": LaunchConfiguration(
+                "remote_enabled_on_start"
+            ),
         }.items(),
-    )])
+    )
+    teleop = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(PathJoinSubstitution([
+            FindPackageShare("om6dof_teleop"), "launch", "teleop.launch.py",
+        ])),
+        launch_arguments={
+            "joint_velocity": LaunchConfiguration("joint_velocity"),
+        }.items(),
+    )
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -36,13 +44,9 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument("baud_rate", default_value="1000000"),
         DeclareLaunchArgument("use_fake_hardware", default_value="false"),
-        DeclareLaunchArgument(
-            "start_hardware",
-            default_value="true",
-            description="Set false when om6dof-hardware.service already owns U2D2.",
-        ),
-        DeclareLaunchArgument("start_rviz", default_value="true"),
-        DeclareLaunchArgument("use_sim", default_value="false"),
+        DeclareLaunchArgument("joint_velocity", default_value="0.5"),
+        DeclareLaunchArgument("remote_enabled_on_start", default_value="false"),
         hardware,
-        moveit,
+        controller,
+        teleop,
     ])

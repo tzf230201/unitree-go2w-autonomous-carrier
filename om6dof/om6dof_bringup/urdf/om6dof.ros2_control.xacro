@@ -37,7 +37,7 @@
           <plugin>dynamixel_hardware_interface/DynamixelHardware</plugin>
           <param name="port_name">${port_name}</param>
           <param name="baud_rate">${baudrate}</param>
-          <param name="error_timeout_sec">0.5</param>
+          <param name="error_timeout_ms">500</param>
           <!-- Plain SyncRead from the start. FastSyncRead is tighter on bus
                timing and throws -3001 SYNC_READ_FAIL on the first cycle after
                activation + sporadically under CPU load. -->
@@ -132,6 +132,9 @@
         <command_interface name="position"/>
         <state_interface name="position"/>
         <state_interface name="velocity"/>
+        <!-- DynamixelHardware maps this ROS effort state to dxl7's
+             Present Current state.  The dxl7 unit override below publishes
+             it in mA, preserving the teleop grasp thresholds. -->
         <state_interface name="effort"/>
       </joint>
 
@@ -140,13 +143,11 @@
            Profile Velocity/Acceleration are a move-duration/accel-duration
            in ms (not raw velocity/accel units) — matches
            ROBOTIS-GIT/open_manipulator's open_manipulator_x_position xacro
-           pattern, and mirrors teleop_node.py's _enable_stream_profile
-           (stream_profile_ms=150 / stream_accel_ms=50) so the MoveIt path
-           and the direct/teleop path move with the same feel. Time-based
-           Profile lets the trajectory controller stream waypoints and have
-           every joint arrive together, instead of each servo racing at its
-           own max velocity. Gripper (dxl7) is left on the servo's default
-           profile mode since teleop_node.py never rewrites its Drive Mode. -->
+           pattern. The profile is owned here by ros2_control, so both the
+           trajectory and forward-position controllers use the same hardware
+           behavior. Time-based Profile lets streamed waypoints arrive
+           together, instead of each servo racing at its own max velocity.
+           Gripper (dxl7) uses the official OM-X current-based position mode. -->
       <gpio name="dxl1">
         <param name="type">dxl</param>
         <param name="ID">31</param>
@@ -270,12 +271,15 @@
         <param name="Profile Acceleration">10</param>
         <param name="Drive Mode">5</param>
         <param name="Return Delay Time">0</param>
-        <param name="Goal Current">200</param>
+        <!-- 45 raw ticks * 2.69 mA/tick = 121.05 mA, matching the former
+             teleop gripper_current_limit_ma default of 120 mA. -->
+        <param name="Goal Current">45</param>
         <param name="[unit info]">
           Present Position,0.000017626621790,m,signed,-0.036099321;
           Goal Position,0.000017626621790,m,signed,-0.036099321;
           Present Velocity,0.000275558153557,rad/s,signed,0.0;
           Goal Velocity,0.000275558153557,rad/s,signed,0.0;
+          Present Current,2.69,mA,signed,0.0;
         </param>
       </gpio>
 

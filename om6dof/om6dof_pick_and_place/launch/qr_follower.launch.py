@@ -26,6 +26,10 @@ def generate_launch_description():
         default_value="true",
         description="Start hardware + move_group via om6dof_bringup/real.launch.py.",
     )
+    start_hardware_arg = DeclareLaunchArgument(
+        "start_hardware", default_value="false",
+        description="Set true only when no permanent om6dof hardware service is running.",
+    )
     port_arg = DeclareLaunchArgument(
         "port_name",
         default_value="/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FT5NUUIQ-if00-port0",
@@ -86,6 +90,7 @@ def generate_launch_description():
             "port_name": LaunchConfiguration("port_name"),
             "baud_rate": LaunchConfiguration("baudrate"),
             "use_fake_hardware": LaunchConfiguration("use_fake_hardware"),
+            "start_hardware": LaunchConfiguration("start_hardware"),
         }.items(),
         condition=IfCondition(LaunchConfiguration("start_moveit")),
     )
@@ -130,6 +135,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         start_moveit_arg,
+        start_hardware_arg,
         port_arg,
         baud_arg,
         fake_arg,

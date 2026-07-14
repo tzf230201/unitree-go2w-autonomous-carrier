@@ -1,31 +1,27 @@
-"""All-in-one launch for the DIRECT (no-MoveIt) AprilTag pick-and-place.
+"""AprilTag direct pick using planned MoveGroup targets.
 
-Starts the AprilTag detector, the direct pick sequencer, and the live
-calibration web GUI — all reading the shared config/tag_pick.yaml. The arm
-itself is driven by the om6dof_teleop teleop node acting as the arm
-server (it does the PyKDL IK + smooth Time-based-Profile streaming).
+Starts MoveGroup, the AprilTag detector, the direct pick sequencer, and the live
+calibration web GUI. Arm targets execute through ``arm_controller``; F3 remote
+mode must be OFF.
 
-The teleop arm server normally runs as the systemd service
-`go2w-arm-launcher`. It MUST have been (re)started after the Cartesian-goal
-servo was added:
+The permanent hardware owner must already be running:
 
-    sudo systemctl restart go2w-arm-launcher.service
+    sudo systemctl restart om6dof-hardware.service
 
 Then, one command:
 
     ros2 launch om6dof_pick_and_place direct_pick.launch.py
 
 Open http://<robot-ip>:8081 — calibrate the world object with the steppers
-(EE pose comes from self-FK, no MoveIt needed), 💾 SIMPAN, then
+(EE pose comes from TF/self-FK), 💾 SIMPAN, then
 ➡ APPROACH (direct) / ▶ RUN PICK (direct).
 
-Set start_arm_server:=true to also launch the teleop arm server here
-(only when the systemd service is stopped — otherwise the serial port
-conflicts).
+Set ``start_moveit:=false`` if another launch already provides MoveGroup.
 """
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
@@ -45,17 +41,10 @@ def generate_launch_description():
         "show_cv_window", default_value="false",
         description="Local OpenCV debug window (the GUI streams it anyway).",
     )
-    arm_server_arg = DeclareLaunchArgument(
-        "start_arm_server", default_value="false",
-        description="Also launch the teleop arm server here. Only when the "
-                    "go2w-arm-launcher systemd service is stopped.",
+    moveit_arg = DeclareLaunchArgument(
+        "start_moveit", default_value="true",
+        description="Launch MoveGroup for planned arm execution.",
     )
-    port_arg = DeclareLaunchArgument(
-        "port_name", default_value="/dev/serial/by-id/"
-        "usb-FTDI_USB__-__Serial_Converter_FT5NUUIQ-if00-port0",
-        description="U2D2 serial device (only used if start_arm_server).",
-    )
-
     config = LaunchConfiguration("config_file")
 
     detector = Node(
@@ -85,19 +74,16 @@ def generate_launch_description():
         parameters=[config],
         emulate_tty=True,
     )
-    arm_server = Node(
-        package="om6dof_teleop",
-        executable="teleop_node",
-        name="om6dof_teleop",
-        output="screen",
-        parameters=[{
-            "port_name": LaunchConfiguration("port_name"),
-        }],
-        emulate_tty=True,
-        condition=IfCondition(LaunchConfiguration("start_arm_server")),
+    moveit = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(PathJoinSubstitution([
+            FindPackageShare("om6dof_moveit_config"),
+            "launch", "om6dof_moveit.launch.py",
+        ])),
+        launch_arguments={"start_rviz": "false"}.items(),
+        condition=IfCondition(LaunchConfiguration("start_moveit")),
     )
 
     return LaunchDescription([
-        config_arg, show_cv_arg, arm_server_arg, port_arg,
-        arm_server, detector, picker, gui,
+        config_arg, show_cv_arg, moveit_arg,
+        moveit, detector, picker, gui,
     ])
