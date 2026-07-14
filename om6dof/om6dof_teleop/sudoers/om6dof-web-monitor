@@ -1,0 +1,2 @@
+# Allow only the web monitor's fixed OM6DOF full-stack restart command.
+unitree ALL=(root) NOPASSWD: /usr/bin/systemctl --no-block restart om6dof-hardware.service

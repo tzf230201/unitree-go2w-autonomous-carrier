@@ -13,6 +13,7 @@ setup(
         ('share/' + package_name, ['package.xml', 'README.md']),
         ('share/' + package_name + '/launch', glob('launch/*.py') + glob('launch/*.rviz')),
         ('share/' + package_name + '/systemd', glob('systemd/*.service')),
+        ('share/' + package_name + '/sudoers', glob('sudoers/*')),
         ('share/' + package_name + '/skills', glob('skills/*.md')),
     ],
     install_requires=['setuptools'],

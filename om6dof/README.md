@@ -379,6 +379,54 @@ journalctl -u om6dof-hardware.service -f
 Jangan restart service ketika arm atau lingkungan berada pada kondisi yang
 tidak aman.
 
+### Restart full stack dari Go2W Monitor
+
+Go2W Monitor berjalan pada service terpisah, sehingga dashboard tetap hidup
+ketika `om6dof-hardware.service` dimulai ulang. Buka:
+
+```text
+http://<ip-go2w>:8080
+```
+
+Tombol **Restart OM6DOF stack** memulai ulang satu jalur penuh:
+`om6dof_bringup`, `om6dof_controller`, dan `om6dof_teleop`. Proses berjalan di
+background; dashboard menunggu maksimal 45 detik sampai menemukan MainPID
+systemd yang baru, node runtime kembali, broadcaster dan gripper aktif, serta
+tepat satu dari `arm_controller` atau `forward_position_controller` aktif.
+
+Web monitor berjalan tanpa privilege. Setelah package dibangun, perbarui unit
+monitor dan pasang izin minimal berikut satu kali:
+
+```bash
+sudo install -o root -g root -m 0644 \
+  ~/ros2_ws/install/om6dof_teleop/share/om6dof_teleop/systemd/om6dof-web-monitor.service \
+  /etc/systemd/system/om6dof-web-monitor.service
+sudo install -o root -g root -m 0440 \
+  ~/ros2_ws/install/om6dof_teleop/share/om6dof_teleop/sudoers/om6dof-web-monitor \
+  /etc/sudoers.d/om6dof-web-monitor
+sudo visudo -cf /etc/sudoers.d/om6dof-web-monitor
+sudo systemctl daemon-reload
+sudo systemctl enable om6dof-web-monitor.service
+sudo systemctl restart om6dof-web-monitor.service
+```
+
+Rule tersebut hanya mengizinkan command tetap berikut, bukan shell atau
+command `systemctl` lain:
+
+```text
+/usr/bin/systemctl --no-block restart om6dof-hardware.service
+```
+
+Jika proses `om6dof_controller` keluar, launch full stack sekarang ikut berhenti
+dan `Restart=always` pada systemd membangun ulang ketiga layer secara otomatis.
+Controller ros2_control yang sekadar berubah menjadi state salah ditandai
+`ACTIVE / INCOMPLETE` pada monitor; gunakan tombol restart setelah memastikan
+area arm aman.
+
+Restart memutus kontrol dan arm dapat bergerak saat inisialisasi. Dashboard
+bind ke `0.0.0.0` tanpa login, sehingga port 8080 hanya boleh tersedia pada LAN
+robot tepercaya atau di belakang firewall/VPN.
+
 ## Mengontrol arm melalui topic
 
 > **Penting:** contoh pada bagian ini memerlukan hardware +
@@ -698,6 +746,24 @@ Periksa:
 systemctl status om6dof-hardware.service
 journalctl -u om6dof-hardware.service -n 200 --no-pager
 ls -l /dev/serial/by-id/
+```
+
+### Tombol restart pada Go2W Monitor ditolak
+
+Pesan `Install the scoped web-monitor sudoers rule` berarti izin satu-command
+belum terpasang atau package belum dibangun ulang. Periksa:
+
+```bash
+sudo visudo -cf /etc/sudoers.d/om6dof-web-monitor
+sudo -n \
+  /usr/bin/systemctl --no-block restart om6dof-hardware.service
+```
+
+Command kedua benar-benar melakukan restart. Jalankan hanya ketika area arm
+aman. Jika hanya ingin memeriksa rule tanpa restart, gunakan:
+
+```bash
+sudo -n -l
 ```
 
 ### Port U2D2 sibuk

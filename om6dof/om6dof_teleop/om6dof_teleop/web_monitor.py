@@ -15,6 +15,8 @@ on the same network. It shows:
   * Remote toggle — a button that publishes a momentary F3 tap onto
                     /wirelesscontroller. F3 switches controller ownership
                     between autonomous and remote control.
+  * OM6DOF restart — a guarded, asynchronous restart of the single systemd
+                     unit that owns bringup, the command converter, and teleop.
 
 The page itself refreshes ONLY when you reload / press Refresh (the camera is a
 separate live stream). Data is read on demand.
@@ -31,6 +33,7 @@ import html
 import json
 import os
 import re
+import secrets
 import shutil
 import signal
 import socket
@@ -45,6 +48,7 @@ from typing import List, Optional, Tuple
 from urllib.parse import parse_qs
 
 import rclpy
+from controller_manager_msgs.srv import ListControllers
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 
@@ -61,6 +65,29 @@ except Exception:  # pragma: no cover
 
 BTN_F3 = 1 << 7
 ARM_BUS_DEVICE = "/dev/ttyUSB0"
+OM6DOF_SERVICE = "om6dof-hardware.service"
+OM6DOF_REQUIRED_NODES = frozenset({
+    "controller_manager",
+    "om6dof_controller",
+    "om6dof_teleop",
+    "robot_state_publisher",
+})
+OM6DOF_ALWAYS_ACTIVE_CONTROLLERS = (
+    "joint_state_broadcaster",
+    "gripper_controller",
+)
+OM6DOF_ARM_CONTROLLERS = (
+    "arm_controller",
+    "forward_position_controller",
+)
+OM6DOF_RESTART_COMMAND = (
+    "/usr/bin/sudo",
+    "-n",
+    "/usr/bin/systemctl",
+    "--no-block",
+    "restart",
+    OM6DOF_SERVICE,
+)
 
 # Unitree sport-mode API ids (verified against the official Unitree ROS2
 # ros2_sport_client.h / .cpp and go2w_cmd_vel_control_node.cpp).
@@ -87,6 +114,8 @@ MAX_VX = 0.4
 MAX_VY = 0.3
 MAX_WZ = 0.8
 MAX_DURATION = 8.0
+MAX_FORM_BODY_BYTES = 4096
+CONTROLLER_QUERY_TIMEOUT = 2.5
 
 
 # --------------------------------------------------------------------------- #
@@ -186,6 +215,69 @@ def kill_node(name: str) -> str:
     return f"Killed '{name}' → PID(s) {pids}{note}."
 
 
+def om6dof_service_status() -> dict:
+    """Read the fixed OM6DOF systemd unit state without elevated access."""
+    result = {
+        "active_state": "unknown",
+        "sub_state": "unknown",
+        "main_pid": 0,
+    }
+    try:
+        completed = subprocess.run(
+            [
+                "/usr/bin/systemctl",
+                "show",
+                OM6DOF_SERVICE,
+                "--property=ActiveState",
+                "--property=SubState",
+                "--property=MainPID",
+                "--no-pager",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return result
+    for line in completed.stdout.splitlines():
+        key, separator, value = line.partition("=")
+        if not separator:
+            continue
+        if key == "ActiveState":
+            result["active_state"] = value.strip() or "unknown"
+        elif key == "SubState":
+            result["sub_state"] = value.strip() or "unknown"
+        elif key == "MainPID":
+            try:
+                result["main_pid"] = max(0, int(value))
+            except ValueError:
+                result["main_pid"] = 0
+    return result
+
+
+def invoke_om6dof_service_restart() -> subprocess.CompletedProcess:
+    """Request one exact privileged action; no HTTP value enters this argv."""
+    return subprocess.run(
+        list(OM6DOF_RESTART_COMMAND),
+        capture_output=True,
+        text=True,
+        timeout=8.0,
+        check=False,
+    )
+
+
+def csrf_token_matches(provided: str, expected: str) -> bool:
+    """Constant-time comparison that also safely rejects non-ASCII input."""
+    try:
+        return secrets.compare_digest(
+            provided.encode("utf-8"),
+            expected.encode("utf-8"),
+        )
+    except (AttributeError, UnicodeError):
+        return False
+
+
 # --------------------------------------------------------------------------- #
 #  ROS node: graph introspection + F3 publisher                               #
 # --------------------------------------------------------------------------- #
@@ -193,6 +285,17 @@ class MonitorNode(Node):
     def __init__(self) -> None:
         super().__init__("go2w_web_monitor")
         self.flash = ""  # one-shot banner (e.g. kill result), shown then cleared
+        self.csrf_token = secrets.token_urlsafe(32)
+        self._arm_restart_lock = threading.Lock()
+        self._arm_restart_phase = "idle"
+        self._arm_restart_message = ""
+        self._arm_restart_started = 0.0
+        self._controller_state_lock = threading.Lock()
+        self._controller_states = {}
+        self._controller_states_updated = 0.0
+        self._controller_query = None
+        self._controller_query_started = 0.0
+        self._controller_query_generation = 0
         qos = QoSProfile(
             depth=10,
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -246,6 +349,11 @@ class MonitorNode(Node):
         self.battery_v: Optional[float] = None
         self.battery_a: Optional[float] = None
         self.create_subscription(LowState, "/lowstate", self._on_lowstate, qos)
+        self.controller_list_client = self.create_client(
+            ListControllers,
+            "/controller_manager/list_controllers",
+        )
+        self.create_timer(1.0, self._poll_controller_states)
 
     def _on_gripper(self, msg: String) -> None:
         self.gripper_state = msg.data
@@ -286,6 +394,226 @@ class MonitorNode(Node):
 
     def set_operation_mode(self, mode: str) -> None:
         self.pub_operation_mode.publish(String(data=mode.strip().upper()))
+
+    def arm_stack_missing_nodes(self) -> List[str]:
+        try:
+            names = {name for name, _namespace in self.nodes()}
+        except Exception:
+            return sorted(OM6DOF_REQUIRED_NODES)
+        return sorted(OM6DOF_REQUIRED_NODES - names)
+
+    def _poll_controller_states(self) -> None:
+        now = time.monotonic()
+        expired_future = None
+        with self._controller_state_lock:
+            if self._controller_query is not None:
+                if (
+                    now - self._controller_query_started
+                    <= CONTROLLER_QUERY_TIMEOUT
+                ):
+                    return
+                expired_future = self._controller_query
+                self._controller_query_generation += 1
+                self._controller_query = None
+                self._controller_query_started = 0.0
+            generation = self._controller_query_generation
+        if expired_future is not None:
+            try:
+                self.controller_list_client.remove_pending_request(expired_future)
+            except Exception:
+                pass
+            self.get_logger().warn(
+                "list_controllers timed out; retrying controller health query"
+            )
+        if not self.controller_list_client.service_is_ready():
+            return
+        future = self.controller_list_client.call_async(ListControllers.Request())
+        discard_future = False
+        with self._controller_state_lock:
+            if generation != self._controller_query_generation:
+                discard_future = True
+            else:
+                self._controller_query = future
+                self._controller_query_started = time.monotonic()
+        if discard_future:
+            try:
+                self.controller_list_client.remove_pending_request(future)
+            except Exception:
+                pass
+            return
+        future.add_done_callback(
+            lambda completed: self._on_controller_states(completed, generation)
+        )
+
+    def _on_controller_states(self, future, generation: int) -> None:
+        with self._controller_state_lock:
+            if (
+                generation != self._controller_query_generation
+                or self._controller_query is not future
+            ):
+                return
+            self._controller_query = None
+            self._controller_query_started = 0.0
+        try:
+            response = future.result()
+        except Exception as exc:
+            self.get_logger().warn(f"list_controllers failed: {exc}")
+            return
+        states = {
+            controller.name: controller.state
+            for controller in response.controller
+        }
+        with self._controller_state_lock:
+            if generation != self._controller_query_generation:
+                return
+            self._controller_states = states
+            self._controller_states_updated = time.monotonic()
+
+    def _invalidate_controller_states(self) -> None:
+        """Discard pre-restart service replies and wait for the new manager."""
+        pending_future = None
+        with self._controller_state_lock:
+            pending_future = self._controller_query
+            self._controller_query_generation += 1
+            self._controller_query = None
+            self._controller_query_started = 0.0
+            self._controller_states = {}
+            self._controller_states_updated = 0.0
+        if pending_future is not None:
+            try:
+                self.controller_list_client.remove_pending_request(pending_future)
+            except Exception:
+                pass
+
+    def controller_state_snapshot(self) -> Tuple[dict, float]:
+        with self._controller_state_lock:
+            return dict(self._controller_states), self._controller_states_updated
+
+    def arm_controller_issues(self, max_age: float = 3.0) -> List[str]:
+        states, updated = self.controller_state_snapshot()
+        if updated <= 0.0 or time.monotonic() - updated > max_age:
+            return ["controller states unavailable"]
+
+        issues = []
+        for name in OM6DOF_ALWAYS_ACTIVE_CONTROLLERS:
+            if states.get(name) != "active":
+                issues.append(f"{name}={states.get(name, 'missing')}")
+
+        arm_state = states.get(OM6DOF_ARM_CONTROLLERS[0], "missing")
+        forward_state = states.get(OM6DOF_ARM_CONTROLLERS[1], "missing")
+        valid_owner_pair = (
+            (arm_state == "active" and forward_state == "inactive")
+            or (arm_state == "inactive" and forward_state == "active")
+        )
+        if not valid_owner_pair:
+            issues.append(
+                f"arm_controller={arm_state}, "
+                f"forward_position_controller={forward_state}"
+            )
+        return issues
+
+    def arm_restart_snapshot(self) -> dict:
+        with self._arm_restart_lock:
+            return {
+                "phase": self._arm_restart_phase,
+                "message": self._arm_restart_message,
+                "started": self._arm_restart_started,
+            }
+
+    def _set_arm_restart_state(self, phase: str, message: str) -> None:
+        with self._arm_restart_lock:
+            self._arm_restart_phase = phase
+            self._arm_restart_message = message
+
+    def request_arm_stack_restart(self) -> Tuple[bool, str]:
+        with self._arm_restart_lock:
+            if self._arm_restart_phase == "restarting":
+                return False, "OM6DOF stack restart is already in progress."
+            self._arm_restart_phase = "restarting"
+            self._arm_restart_message = (
+                "Restart requested; waiting for systemd and ROS nodes."
+            )
+            self._arm_restart_started = time.monotonic()
+        threading.Thread(
+            target=self._restart_arm_stack_worker,
+            name="om6dof-service-restart",
+            daemon=True,
+        ).start()
+        return True, "OM6DOF stack restart requested."
+
+    def _restart_arm_stack_worker(self) -> None:
+        old_status = om6dof_service_status()
+        old_pid = int(old_status["main_pid"])
+        try:
+            completed = invoke_om6dof_service_restart()
+        except subprocess.TimeoutExpired:
+            message = "OM6DOF restart command timed out."
+            self._set_arm_restart_state("failed", message)
+            self.get_logger().error(message)
+            return
+        except OSError as exc:
+            message = f"OM6DOF restart command failed: {exc}"
+            self._set_arm_restart_state("failed", message)
+            self.get_logger().error(message)
+            return
+
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout).strip()
+            if len(detail) > 300:
+                detail = detail[:297] + "..."
+            message = "OM6DOF restart denied"
+            if detail:
+                message += f": {detail}"
+            message += ". Install the scoped web-monitor sudoers rule."
+            self._set_arm_restart_state("failed", message)
+            self.get_logger().error(message)
+            return
+
+        deadline = time.monotonic() + 45.0
+        last_status = old_status
+        last_missing = self.arm_stack_missing_nodes()
+        last_controller_issues = self.arm_controller_issues()
+        observed_new_pid = 0
+        while time.monotonic() < deadline:
+            last_status = om6dof_service_status()
+            last_missing = self.arm_stack_missing_nodes()
+            new_pid = int(last_status["main_pid"])
+            pid_replaced = new_pid > 0 and (old_pid <= 0 or new_pid != old_pid)
+            if pid_replaced and new_pid != observed_new_pid:
+                # Any cached response can belong to the previous manager. A
+                # fresh list_controllers response is required after each new
+                # systemd MainPID is observed.
+                self._invalidate_controller_states()
+                observed_new_pid = new_pid
+            last_controller_issues = self.arm_controller_issues()
+            if (
+                last_status["active_state"] == "active"
+                and pid_replaced
+                and not last_missing
+                and not last_controller_issues
+            ):
+                message = (
+                    f"OM6DOF stack READY; MainPID {old_pid or '-'} -> "
+                    f"{new_pid}, controller_manager and controller recovered."
+                )
+                self._set_arm_restart_state("ready", message)
+                self.get_logger().info(message)
+                return
+            time.sleep(0.5)
+
+        missing = ", ".join(last_missing) if last_missing else "none"
+        controller_issues = (
+            "; ".join(last_controller_issues)
+            if last_controller_issues else "none"
+        )
+        message = (
+            "OM6DOF restart verification timed out: "
+            f"service={last_status['active_state']}/"
+            f"{last_status['sub_state']}, missing nodes={missing}, "
+            f"controller issues={controller_issues}."
+        )
+        self._set_arm_restart_state("failed", message)
+        self.get_logger().error(message)
 
     # ----------------------------------------------------------------------- #
     #  Sport-mode motion (chat "Robot Agent" mode)                            #
@@ -887,6 +1215,7 @@ td.k{color:#9aa4b2;width:42%}
 button,.btn{background:#2b64f5;color:#fff;border:0;padding:9px 16px;border-radius:8px;
   font-size:14px;cursor:pointer;text-decoration:none;display:inline-block}
 button.stop{background:#c0392b}
+button:disabled{opacity:.55;cursor:not-allowed}
 .btn.ghost{background:#2a2e39}
 img.cam{width:100%;border-radius:8px;background:#000;min-height:220px}
 .small{color:#6b7280;font-size:12px}
@@ -928,6 +1257,13 @@ async function pollStatus(){
     if(!r.ok) return;
     const d = await r.json();
     for(const k in d){ const el=document.getElementById('st_'+k); if(el) el.innerHTML=d[k]; }
+    const restartButton=document.getElementById('restart_om6dof_btn');
+    const armStackCard=document.getElementById('arm_stack_card');
+    if(armStackCard && d.arm_stack!==undefined) armStackCard.innerHTML=d.arm_stack;
+    if(restartButton && d.arm_stack_busy!==undefined){
+      restartButton.disabled=!!d.arm_stack_busy;
+      restartButton.textContent=d.arm_stack_busy ? '⏳ Restarting OM6DOF…' : '♻ Restart OM6DOF stack';
+    }
     const dot=document.getElementById('st_dot');
     if(dot){ dot.style.color='#4ade80'; setTimeout(()=>{dot.style.color='#6b7280';},400); }
   }catch(e){}
@@ -1022,7 +1358,9 @@ def status_fields(node) -> dict:
     plus /proc reads and cached battery/gripper — light enough to poll often."""
     info = sys_info()
     counts: dict = {}
+    node_names = set()
     for name, ns in node.nodes():
+        node_names.add(name)
         key = f"{ns.rstrip('/')}/{name}" if ns not in ("", "/") else name
         counts[key] = counts.get(key, 0) + 1
     dups = sum(1 for c in counts.values() if c > 1)
@@ -1034,6 +1372,34 @@ def status_fields(node) -> dict:
                     '<button class="kill" type="submit">kill</button></form>')
     else:
         llm_cell = '<span class="pill ok">none loaded</span>'
+    service = om6dof_service_status()
+    missing = sorted(OM6DOF_REQUIRED_NODES - node_names)
+    controller_issues = node.arm_controller_issues()
+    restart = node.arm_restart_snapshot()
+    restart_busy = restart["phase"] == "restarting"
+    if restart_busy:
+        arm_stack = '<span class="pill warn">RESTARTING</span>'
+    elif (
+        service["active_state"] == "active"
+        and not missing
+        and not controller_issues
+    ):
+        arm_stack = (
+            '<span class="pill ok">ACTIVE / HEALTHY</span> '
+            f'<span class="mono">PID {service["main_pid"]}</span>'
+        )
+    elif service["active_state"] == "active":
+        issues = [f"missing node: {name}" for name in missing]
+        issues.extend(controller_issues)
+        arm_stack = (
+            '<span class="pill bad">ACTIVE / INCOMPLETE</span> '
+            f'<span class="mono">{html.escape("; ".join(issues))}</span>'
+        )
+    else:
+        state = html.escape(
+            f"{service['active_state']}/{service['sub_state']}"
+        )
+        arm_stack = f'<span class="pill bad">{state}</span>'
     return {
         "uptime": html.escape(info["uptime"]),
         "load": f'<span class="mono">{html.escape(info["load"])}</span>',
@@ -1047,6 +1413,12 @@ def status_fields(node) -> dict:
             if node.control_mode else '<span class="pill warn">unknown</span>'
         ),
         "gripper": gripper_pill(node.gripper_state),
+        "arm_stack": arm_stack,
+        "arm_stack_busy": restart_busy,
+        "arm_restart_message": (
+            html.escape(restart["message"])
+            if restart["message"] else "belum ada"
+        ),
         "llm": llm_cell,
         "dups": (f'<span class="pill bad">{dups} FOUND</span>' if dups
                  else '<span class="pill ok">none</span>'),
@@ -1081,6 +1453,7 @@ def render_page(node: MonitorNode, cam: CameraManager) -> str:
         ("Teleop", fields["teleop"], "teleop"),
         ("Arm control mode", fields["control_mode"], "control_mode"),
         ("Gripper", fields["gripper"], "gripper"),
+        ("OM6DOF stack", fields["arm_stack"], "arm_stack"),
         ("LLM loaded", fields["llm"], "llm"),
         ("Duplicate nodes", fields["dups"], "dups"),
     ]
@@ -1149,6 +1522,30 @@ def render_page(node: MonitorNode, cam: CameraManager) -> str:
     </div>
     """
 
+    restart = node.arm_restart_snapshot()
+    restart_disabled = " disabled" if restart["phase"] == "restarting" else ""
+    restart_label = (
+        "⏳ Restarting OM6DOF…"
+        if restart["phase"] == "restarting"
+        else "♻ Restart OM6DOF stack"
+    )
+    arm_service_html = f"""
+    <div class="card">
+      <h2>🦾 OM6DOF hardware/controller service</h2>
+      <p>Status: <span id="arm_stack_card">{fields["arm_stack"]}</span></p>
+      <form method="POST" action="/restart_om6dof"
+            onsubmit="return confirm('Restart seluruh OM6DOF stack? Control arm akan terputus sementara dan arm dapat bergerak saat inisialisasi.')">
+        <input type="hidden" name="csrf" value="{html.escape(node.csrf_token, quote=True)}">
+        <button class="stop" id="restart_om6dof_btn" type="submit"{restart_disabled}>{restart_label}</button>
+      </form>
+      <p class="small">Hasil restart terakhir:
+      <span id="st_arm_restart_message">{fields["arm_restart_message"]}</span></p>
+      <p class="small">Me-restart satu unit <span class="mono">{OM6DOF_SERVICE}</span>:
+      ros2_control bringup, om6dof_controller, dan teleop. Gunakan hanya ketika
+      area gerak arm aman.</p>
+    </div>
+    """
+
     # --- AI chat card (model selector = local Ollama models + codex + claude) ---
     # Smallest models first so the default selection is the one most likely to
     # fit the Orin GPU (7B models OOM here; 3B fits).
@@ -1208,7 +1605,7 @@ def render_page(node: MonitorNode, cam: CameraManager) -> str:
 <a class="btn ghost" href="/">↻ Refresh</a>
 <form class="inline" method="POST" action="/restart"
       onsubmit="return confirm('Restart the web monitor service? The page will reconnect in a few seconds.')">
-  <button class="stop" type="submit">♻ Restart service</button>
+  <button class="stop" type="submit">♻ Restart monitor</button>
 </form>
 <form class="inline" method="POST" action="/shutdown"
       onsubmit="return confirm('Matikan web monitor & lepas kamera? Monitor TIDAK akan hidup lagi sampai dijalankan manual (systemctl start).')">
@@ -1225,6 +1622,7 @@ Node &amp; topic lists are now available via chat. Snapshot {now}.</p>
   <div>
     <div class="card"><h2>📊 Robot status <span class="small" id="st_dot">●</span></h2>
       <table>{status_rows}</table></div>
+    {arm_service_html}
     {teleop_html}
   </div>
   <div>
@@ -1252,6 +1650,13 @@ def make_handler(node: MonitorNode, cam: CameraManager):
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header(
+                "Content-Security-Policy",
+                "frame-ancestors 'none'; form-action 'self'",
+            )
+            self.send_header("Referrer-Policy", "no-referrer")
             self.end_headers()
             self.wfile.write(data)
 
@@ -1261,6 +1666,8 @@ def make_handler(node: MonitorNode, cam: CameraManager):
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Frame-Options", "DENY")
             self.end_headers()
             self.wfile.write(data)
 
@@ -1281,8 +1688,18 @@ def make_handler(node: MonitorNode, cam: CameraManager):
                     )
             self.send_error(404)
 
-        def _read_form(self) -> dict:
-            length = int(self.headers.get("Content-Length", 0) or 0)
+        def _read_form(self, max_bytes: int = MAX_FORM_BODY_BYTES) -> dict:
+            try:
+                length = int(self.headers.get("Content-Length", 0) or 0)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("invalid Content-Length") from exc
+            if length < 0:
+                raise ValueError("invalid Content-Length")
+            if length > max_bytes:
+                # Do not consume an attacker-controlled body. Closing the
+                # keep-alive connection prevents it becoming the next request.
+                self.close_connection = True
+                raise ValueError(f"form body exceeds {max_bytes} bytes")
             body = self.rfile.read(length).decode("utf-8") if length else ""
             return {k: v[0] for k, v in parse_qs(body).items()}
 
@@ -1290,6 +1707,7 @@ def make_handler(node: MonitorNode, cam: CameraManager):
             self.send_response(303)
             self.send_header("Location", "/")
             self.send_header("Content-Length", "0")
+            self.send_header("X-Frame-Options", "DENY")
             self.end_headers()
 
         def do_POST(self):
@@ -1320,6 +1738,32 @@ def make_handler(node: MonitorNode, cam: CameraManager):
                 except Exception as exc:
                     node.flash = f"teleop control failed: {exc}"
                 node.get_logger().info(node.flash)
+                return self._redirect_home()
+            if self.path == "/restart_om6dof":
+                try:
+                    provided = self._read_form().get("csrf", "")
+                except (UnicodeError, ValueError) as exc:
+                    return self._send_html(
+                        "<h2>Request rejected</h2>"
+                        f"<p>{html.escape(str(exc))}</p>",
+                        413 if "exceeds" in str(exc) else 400,
+                    )
+                if not csrf_token_matches(provided, node.csrf_token):
+                    node.get_logger().warn(
+                        "Rejected OM6DOF restart with invalid CSRF token."
+                    )
+                    return self._send_html(
+                        "<h2>403 Forbidden</h2><p>Invalid restart token.</p>",
+                        403,
+                    )
+                started, message = node.request_arm_stack_restart()
+                node.flash = message
+                if started:
+                    node.get_logger().warn(
+                        "OM6DOF full-stack restart requested from web monitor."
+                    )
+                else:
+                    node.get_logger().info(message)
                 return self._redirect_home()
             if self.path == "/chat":
                 try:
@@ -1379,7 +1823,7 @@ def make_handler(node: MonitorNode, cam: CameraManager):
                     "<p>Kamera dilepas. Monitor tidak akan hidup lagi sampai "
                     "dijalankan manual:</p>"
                     "<pre style='color:#7ea1ff'>sudo systemctl start "
-                    "go2w-web-monitor.service</pre></body>"
+                    "om6dof-web-monitor.service</pre></body>"
                 )
                 self._send_html(body)
                 try:

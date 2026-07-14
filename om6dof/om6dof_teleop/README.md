@@ -232,3 +232,41 @@ Unitree CycloneDDS environment before the ROS workspace. After building, copy
 the unit from the package share directory and enable it in the normal way. Do
 not restart it while the physical arm is in an unsafe pose: startup can claim
 the position interfaces and move to READY according to the launch setting.
+
+The separate `om6dof-web-monitor.service` stays alive while the arm stack is
+restarted. Its dashboard at `http://<go2w-ip>:8080` provides **Restart OM6DOF
+stack**. The request is asynchronous: the page waits up to 45 seconds for a new
+systemd MainPID, the four OM6DOF runtime nodes, and healthy ros2_control
+states. Healthy means `joint_state_broadcaster` and `gripper_controller` are
+active and exactly one of `arm_controller` or
+`forward_position_controller` owns the arm interfaces.
+
+The monitor runs as the unprivileged `unitree` user. Install the packaged,
+updated monitor unit and the single-command sudoers rule once after building:
+
+```bash
+sudo install -o root -g root -m 0644 \
+  ~/ros2_ws/install/om6dof_teleop/share/om6dof_teleop/systemd/om6dof-web-monitor.service \
+  /etc/systemd/system/om6dof-web-monitor.service
+sudo install -o root -g root -m 0440 \
+  ~/ros2_ws/install/om6dof_teleop/share/om6dof_teleop/sudoers/om6dof-web-monitor \
+  /etc/sudoers.d/om6dof-web-monitor
+sudo visudo -cf /etc/sudoers.d/om6dof-web-monitor
+sudo systemctl daemon-reload
+sudo systemctl enable om6dof-web-monitor.service
+sudo systemctl restart om6dof-web-monitor.service
+```
+
+The rule permits only this exact command:
+
+```text
+/usr/bin/systemctl --no-block restart om6dof-hardware.service
+```
+
+It does not grant a shell or general `systemctl` access. A controller process
+exit also shuts down the containing full-stack launch; the hardware service's
+`Restart=always` then rebuilds bringup, controller, and teleop together.
+
+Restarting interrupts arm control and initialization can move the arm. Clear
+the workspace first. The monitor binds to `0.0.0.0` and has no login page, so
+expose port 8080 only on a trusted robot LAN or protect it with a firewall/VPN.
