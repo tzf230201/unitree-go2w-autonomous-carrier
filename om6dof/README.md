@@ -399,10 +399,10 @@ monitor dan pasang izin minimal berikut satu kali:
 
 ```bash
 sudo install -o root -g root -m 0644 \
-  ~/ros2_ws/install/om6dof_teleop/share/om6dof_teleop/systemd/om6dof-web-monitor.service \
+  ~/ros2_ws/install/application_web_monitor/share/application_web_monitor/systemd/om6dof-web-monitor.service \
   /etc/systemd/system/om6dof-web-monitor.service
 sudo install -o root -g root -m 0440 \
-  ~/ros2_ws/install/om6dof_teleop/share/om6dof_teleop/sudoers/om6dof-web-monitor \
+  ~/ros2_ws/install/application_web_monitor/share/application_web_monitor/sudoers/om6dof-web-monitor \
   /etc/sudoers.d/om6dof-web-monitor
 sudo visudo -cf /etc/sudoers.d/om6dof-web-monitor
 sudo systemctl daemon-reload

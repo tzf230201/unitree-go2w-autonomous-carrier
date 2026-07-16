@@ -13,8 +13,6 @@ setup(
         ('share/' + package_name, ['package.xml', 'README.md']),
         ('share/' + package_name + '/launch', glob('launch/*.py') + glob('launch/*.rviz')),
         ('share/' + package_name + '/systemd', glob('systemd/*.service')),
-        ('share/' + package_name + '/sudoers', glob('sudoers/*')),
-        ('share/' + package_name + '/skills', glob('skills/*.md')),
     ],
     install_requires=['setuptools'],
     tests_require=['pytest'],
@@ -27,7 +25,6 @@ setup(
         'console_scripts': [
             'teleop_node = om6dof_teleop.joint_teleop:main',
             'grip_object = om6dof_teleop.grip_object:main',
-            'web_monitor = om6dof_teleop.web_monitor:main',
         ],
     },
 )

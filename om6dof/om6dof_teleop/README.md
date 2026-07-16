@@ -233,9 +233,10 @@ the unit from the package share directory and enable it in the normal way. Do
 not restart it while the physical arm is in an unsafe pose: startup can claim
 the position interfaces and move to READY according to the launch setting.
 
-The separate `om6dof-web-monitor.service` stays alive while the arm stack is
-restarted. Its dashboard at `http://<go2w-ip>:8080` provides **Restart OM6DOF
-stack**. The request is asynchronous: the page waits up to 45 seconds for a new
+The separate `om6dof-web-monitor.service` from the
+`application_web_monitor` package stays alive while the arm stack is restarted.
+Its dashboard at `http://<go2w-ip>:8080` provides **Restart OM6DOF stack**. The
+request is asynchronous: the page waits up to 45 seconds for a new
 systemd MainPID, the four OM6DOF runtime nodes, and healthy ros2_control
 states. Healthy means `joint_state_broadcaster` and `gripper_controller` are
 active and exactly one of `arm_controller` or
@@ -246,10 +247,10 @@ updated monitor unit and the single-command sudoers rule once after building:
 
 ```bash
 sudo install -o root -g root -m 0644 \
-  ~/ros2_ws/install/om6dof_teleop/share/om6dof_teleop/systemd/om6dof-web-monitor.service \
+  ~/ros2_ws/install/application_web_monitor/share/application_web_monitor/systemd/om6dof-web-monitor.service \
   /etc/systemd/system/om6dof-web-monitor.service
 sudo install -o root -g root -m 0440 \
-  ~/ros2_ws/install/om6dof_teleop/share/om6dof_teleop/sudoers/om6dof-web-monitor \
+  ~/ros2_ws/install/application_web_monitor/share/application_web_monitor/sudoers/om6dof-web-monitor \
   /etc/sudoers.d/om6dof-web-monitor
 sudo visudo -cf /etc/sudoers.d/om6dof-web-monitor
 sudo systemctl daemon-reload
