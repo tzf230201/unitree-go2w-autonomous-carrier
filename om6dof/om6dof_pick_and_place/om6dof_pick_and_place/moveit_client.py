@@ -8,7 +8,7 @@ goal + `control_msgs/action/GripperCommand` goal.
 This wrapper is intentionally small — enough to:
   - send a *named target* goal (group_state from the SRDF, e.g. "home", "rest")
   - send a *joint values* goal (list of 6 floats for the arm)
-  - send a *pose* goal (geometry_msgs/Pose in `world` frame)
+  - send a *position* or *pose* goal (geometry_msgs/Pose in `world` frame)
   - command the gripper to an absolute prismatic position
 
 Async control flow: every method blocks until the action finishes; result is
@@ -275,6 +275,37 @@ class MoveItClient:
         oc.absolute_z_axis_tolerance = ori_tol
         oc.weight = 1.0
         gc.orientation_constraints.append(oc)
+
+        req.goal_constraints.append(gc)
+        return self._send_move_goal(req)
+
+    def move_to_position(
+        self,
+        pose: Pose,
+        ee_link: Optional[str] = None,
+        position_tolerance: Optional[float] = None,
+    ) -> bool:
+        """Move the tool point without constraining its orientation.
+
+        This is useful for a staged grasp: first place the gripper in front
+        of the object, then issue a second pose goal that aligns orientation
+        at exactly the same position.
+        """
+        link = ee_link or self.ee_link
+        pos_tol = self.pos_tol if position_tolerance is None else float(position_tolerance)
+        req = self._new_plan_request(self.arm_group)
+        gc = Constraints()
+
+        pc = PositionConstraint()
+        pc.header.frame_id = self.reference_frame
+        pc.link_name = link
+        sphere = SolidPrimitive()
+        sphere.type = SolidPrimitive.SPHERE
+        sphere.dimensions = [pos_tol]
+        pc.constraint_region.primitives.append(sphere)
+        pc.constraint_region.primitive_poses.append(pose)
+        pc.weight = 1.0
+        gc.position_constraints.append(pc)
 
         req.goal_constraints.append(gc)
         return self._send_move_goal(req)

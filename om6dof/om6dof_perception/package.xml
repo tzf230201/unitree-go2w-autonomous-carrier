@@ -5,9 +5,9 @@
   <version>0.1.0</version>
   <description>
     Camera-frame object and end-effector perception for OM6DOF.
-    VLM acquires targets, an OpenCV tracker follows them in real time,
-    RealSense depth deprojects to 3D, and the node publishes the
-    EE-to-target relative vector for later closed-loop control.
+    Local YOLOX acquires targets, an OpenCV tracker follows them in real time,
+    RealSense depth deprojects detections to 3D, with optional end-effector
+    output when a supported detector class is configured.
   </description>
   <maintainer email="biancanobelia@gmail.com">unitree</maintainer>
   <license>Apache-2.0</license>
@@ -22,6 +22,7 @@
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
   <exec_depend>python3-opencv</exec_depend>
+  <test_depend>python3-pytest</test_depend>
 
   <export>
     <build_type>ament_python</build_type>

@@ -46,7 +46,7 @@ td{padding:2px 10px 2px 0}
 <main>
  <section style="flex:1.4"><img src="/stream" alt="menunggu frame dari perception_node..."></section>
  <section>
-  <label>Ganti target (deskripsi bahasa Inggris, makin detail makin akurat)</label>
+  <label>Ganti target (kelas COCO, contoh: bottle, cup, person)</label>
   <input id="tgt" placeholder="red cube on the table">
   <button onclick="retarget()">Set target</button>
   <div id="msg" style="color:#9aa3b2;font-size:13px;margin:4px 0"></div>

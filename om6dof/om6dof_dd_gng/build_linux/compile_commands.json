@@ -1,0 +1,57 @@
+[
+{
+  "directory": "/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/build_linux",
+  "command": "/usr/bin/c++ -DdDOUBLE -I/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/third_party/drawstuff/include -I/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/third_party/drawstuff/src -O3 -DNDEBUG -std=gnu++14 -o CMakeFiles/drawstuff.dir/third_party/drawstuff/src/drawstuff.cpp.o -c /home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/third_party/drawstuff/src/drawstuff.cpp",
+  "file": "/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/third_party/drawstuff/src/drawstuff.cpp"
+},
+{
+  "directory": "/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/build_linux",
+  "command": "/usr/bin/c++ -DdDOUBLE -I/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/third_party/drawstuff/include -I/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/third_party/drawstuff/src -O3 -DNDEBUG -std=gnu++14 -o CMakeFiles/drawstuff.dir/third_party/drawstuff/src/x11.cpp.o -c /home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/third_party/drawstuff/src/x11.cpp",
+  "file": "/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/third_party/drawstuff/src/x11.cpp"
+},
+{
+  "directory": "/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/build_linux",
+  "command": "/usr/bin/c++ -D_USE_MATH_DEFINES -DdDOUBLE -I/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/third_party/drawstuff/include -O3 -DNDEBUG -std=gnu++14 -o CMakeFiles/DepthSensor_Buggy.dir/DepthSensor_Buggy/main.cpp.o -c /home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/DepthSensor_Buggy/main.cpp",
+  "file": "/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/DepthSensor_Buggy/main.cpp"
+},
+{
+  "directory": "/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/build_linux",
+  "command": "/usr/bin/c++ -D_USE_MATH_DEFINES -DdDOUBLE -I/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/third_party/drawstuff/include -O3 -DNDEBUG -std=gnu++14 -o CMakeFiles/DepthSensor_Buggy.dir/DepthSensor_Buggy/environment.cpp.o -c /home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/DepthSensor_Buggy/environment.cpp",
+  "file": "/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/DepthSensor_Buggy/environment.cpp"
+},
+{
+  "directory": "/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/build_linux",
+  "command": "/usr/bin/c++ -D_USE_MATH_DEFINES -DdDOUBLE -I/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/third_party/drawstuff/include -O3 -DNDEBUG -std=gnu++14 -o CMakeFiles/DepthSensor_Buggy.dir/DepthSensor_Buggy/extDisplay.cpp.o -c /home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/DepthSensor_Buggy/extDisplay.cpp",
+  "file": "/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/DepthSensor_Buggy/extDisplay.cpp"
+},
+{
+  "directory": "/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/build_linux",
+  "command": "/usr/bin/c++ -D_USE_MATH_DEFINES -DdDOUBLE -I/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/third_party/drawstuff/include -O3 -DNDEBUG -std=gnu++14 -o CMakeFiles/DepthSensor_Buggy.dir/DepthSensor_Buggy/gng.cpp.o -c /home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/DepthSensor_Buggy/gng.cpp",
+  "file": "/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/DepthSensor_Buggy/gng.cpp"
+},
+{
+  "directory": "/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/build_linux",
+  "command": "/usr/bin/c++ -D_USE_MATH_DEFINES -DdDOUBLE -I/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/third_party/drawstuff/include -O3 -DNDEBUG -std=gnu++14 -o CMakeFiles/DepthSensor_Buggy.dir/DepthSensor_Buggy/malloc.cpp.o -c /home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/DepthSensor_Buggy/malloc.cpp",
+  "file": "/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/DepthSensor_Buggy/malloc.cpp"
+},
+{
+  "directory": "/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/build_linux",
+  "command": "/usr/bin/c++ -D_USE_MATH_DEFINES -DdDOUBLE -I/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/third_party/drawstuff/include -O3 -DNDEBUG -std=gnu++14 -o CMakeFiles/DepthSensor_Buggy.dir/DepthSensor_Buggy/mesh.cpp.o -c /home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/DepthSensor_Buggy/mesh.cpp",
+  "file": "/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/DepthSensor_Buggy/mesh.cpp"
+},
+{
+  "directory": "/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/build_linux",
+  "command": "/usr/bin/c++ -D_USE_MATH_DEFINES -DdDOUBLE -I/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/third_party/drawstuff/include -O3 -DNDEBUG -std=gnu++14 -o CMakeFiles/DepthSensor_Buggy.dir/DepthSensor_Buggy/projection.cpp.o -c /home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/DepthSensor_Buggy/projection.cpp",
+  "file": "/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/DepthSensor_Buggy/projection.cpp"
+},
+{
+  "directory": "/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/build_linux",
+  "command": "/usr/bin/c++ -D_USE_MATH_DEFINES -DdDOUBLE -I/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/third_party/drawstuff/include -O3 -DNDEBUG -std=gnu++14 -o CMakeFiles/DepthSensor_Buggy.dir/DepthSensor_Buggy/rnd.cpp.o -c /home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/DepthSensor_Buggy/rnd.cpp",
+  "file": "/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/DepthSensor_Buggy/rnd.cpp"
+},
+{
+  "directory": "/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/build_linux",
+  "command": "/usr/bin/c++ -D_USE_MATH_DEFINES -DdDOUBLE -I/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/third_party/drawstuff/include -O3 -DNDEBUG -std=gnu++14 -o CMakeFiles/DepthSensor_Buggy.dir/DepthSensor_Buggy/surfMatching.cpp.o -c /home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/DepthSensor_Buggy/surfMatching.cpp",
+  "file": "/home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/DepthSensor_Buggy/surfMatching.cpp"
+}
+]

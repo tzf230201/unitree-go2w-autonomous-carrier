@@ -594,7 +594,7 @@ button:active{background:#3d5a80}
   <button class="save" style="background:#3a3a3a;border-color:#666"
    onclick="gripClose()">✊ GRIP CLOSE</button>
   <button class="save" style="background:#1d5c5c;border-color:#2f8a8a"
-   onclick="runTrack()">🎯 TRACK (ngejar objek)</button>
+   onclick="runTrack()">🎯 TRACK OBJECT (PAN–TILT)</button>
   <button class="save" style="background:#5c1d1d;border-color:#8a2f2f"
    onclick="runStop()">■ STOP</button>
   <button class="save" style="background:#2a5c3a;border-color:#468a5a"
@@ -701,7 +701,7 @@ function runApproach(){trigger("/approach","/run_front_approach",
 function runDirect(){trigger("/direct_run","/run_direct_pick",
  "DIRECT (tanpa MoveIt): arm akan BERGERAK menjalankan sekuens pick penuh. Area aman?")}
 function runTrack(){trigger("/track","/direct_track",
- "Arm akan MENGEJAR objek terus-menerus (hover di depannya, ikut geseran termasuk y). Area aman?")}
+ "Kamera akan mengikuti objek KIRI/KANAN dan ATAS/BAWAH dengan joint1 + joint5. Joint lain tidak digerakkan. Area aman?")}
 function runStop(){trigger("/stop","/direct_stop",null)}
 function runDirectApproach(){trigger("/direct_approach","/direct_approach",
  "DIRECT (tanpa MoveIt): arm akan BERGERAK ke depan objek lalu berhenti (tanpa grasp). Lanjut?")}

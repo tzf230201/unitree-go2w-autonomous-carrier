@@ -1,0 +1,19 @@
+[Unit]
+Description=OM6DOF DD-GNG YOLO semantic-node web stream
+After=network-online.target
+Wants=network-online.target
+Conflicts=om6dof-perception.service om6dof-perception-pick.service
+
+[Service]
+Type=simple
+Environment=HOME=/home/unitree
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/bin/bash -lc 'set -e; source /opt/ros/humble/setup.bash; source /home/unitree/unitree_ros2/setup.sh; source /home/unitree/ros2_ws/install/setup.bash; exec /usr/bin/python3 /home/unitree/ros2_ws/src/unitree-go2w-autonomous-carrier/om6dof/om6dof_dd_gng/realsense_ddgng/dd_gng_yolo.py --headless --ros-topic /application_web_monitor/ddgng/image/compressed --labels-topic /application_web_monitor/ddgng/labels'
+KillMode=control-group
+KillSignal=SIGINT
+TimeoutStopSec=15
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

@@ -13,6 +13,8 @@ setup(
          ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml", "README.md"]),
         ("share/" + package_name + "/launch", glob("launch/*.launch.py")),
+        ("share/" + package_name + "/systemd", glob("systemd/*.service")),
+        ("share/" + package_name + "/sudoers", glob("sudoers/*")),
     ],
     install_requires=["setuptools"],
     zip_safe=True,

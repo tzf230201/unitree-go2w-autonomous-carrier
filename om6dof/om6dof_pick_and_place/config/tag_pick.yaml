@@ -161,6 +161,11 @@ tag_pick_place:
 coord_debug:
   ros__parameters:
     tag_topic: "/apriltag/pose"
+    object_source: "apriltag"
+    perception_topic: "/om6dof_perception/target_point"
+    perception_max_spread: 0.025
+    perception_world_min: [0.08, -0.35, -0.08]
+    perception_world_max: [0.45, 0.35, 0.45]
     enable_robot_debug: true
     joint_state_topic: "/joint_states"
     reference_frame: "world"
@@ -188,15 +193,52 @@ direct_pick:
     object_center_from_tag: [0.00000, 0.00000, -0.01500]
     tag_topic: "/apriltag/pose"
     arm_joint_names: ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
+    # The calibrated world origin is above the support surface.  A detected
+    # object's centre may therefore be slightly below z=0 and is still valid.
+    perception_world_min: [0.08, -0.35, -0.08]
+    perception_world_max: [0.50, 0.35, 0.45]
     front_standoff: 0.05        # maju ~5 cm (dulu 10 cm)
     front_approach_z_offset: 0.04
     front_grasp_back: 0.005
-    approach_offset: [0.10000, 0.10000]   # [standoff(depan), naik(atas)] titik hover
+    approach_offset: [0.08000, 0.00000]   # depan objek pada tinggi grasp; advance lurus
     pick_offset: [0.07000, 0.00000]     # [maju(+dalam), naik(+atas)] koreksi genggam
     front_pitch: 1.5708
+    front_pitch_fallbacks: [1.5708, 1.65, 1.72, 1.8, 1.9, 2.0, 2.1, 2.2, 2.3, 2.4, 1.4, 1.2]
+    approach_upright_pitch_max: 2.0  # cegah pendekatan memakai pose terbalik
+    advance_step_m: 0.015       # waypoint 1.5 cm agar gerak masuk hampir lurus
+    align_position_tolerance: 0.006
+    align_orientation_tolerance: 0.10
+    advance_position_tolerance: 0.004
+    advance_orientation_tolerance: 0.10
+    tracking_rate_hz: 5.0
+    tracking_gain: 0.45
+    tracking_yaw_sign: -1.0
+    tracking_deadband_rad: 0.045
+    tracking_max_step_rad: 0.05
+    tracking_trajectory_s: 0.30
+    tracking_target_timeout_s: 0.60
+    tracking_joint1_min: -2.60
+    tracking_joint1_max: 2.60
+    tracking_vertical_gain: 0.35
+    tracking_pitch_sign: 1.0
+    tracking_vertical_deadband_rad: 0.045
+    tracking_vertical_max_step_rad: 0.04
+    tracking_joint5_min: -1.80
+    tracking_joint5_max: 1.80
+    pickup_tracking_enabled: true
+    pickup_tracking_timeout_s: 8.0
+    pickup_tracking_stable_cycles: 3
+    pickup_object_refresh_timeout_s: 2.0
+    pickup_coarse_standoff_m: 0.16
+    pickup_approach_step_m: 0.04
+    pickup_min_approach_radius_m: 0.28  # hindari link7-link4 terlipat dekat base
+    pickup_optical_depth_min_m: 0.05
+    pickup_optical_depth_max_m: 1.00
     lift_after_grasp: 0.05
-    min_z: 0.01
+    min_z: -0.02             # world origin di atas meja; tetap ~7 cm di atas table
     ready_pose: [0.0, -0.6806, 1.3613, 0.0, 0.8901, 0.0]
+    # Joint pose lokasi drop: sisi kiri robot. Object tetap dijepit selama
+    # transfer dan baru dilepas setelah pose ini benar-benar tercapai.
     place_pose: [1.2, -0.5, 1.2, 0.0, 0.9, 0.0]
     gripper_open: 0.019
     gripper_close: -0.010
@@ -211,6 +253,6 @@ calib_gui:
     camera_xyz: [-0.08247, 0.00000, -0.00960]
     camera_rpy: [0.00000, -1.13450, 0.00000]
     object_center_from_tag: [0.00000, 0.00000, -0.01500]
-    approach_offset: [0.10000, 0.10000]
+    approach_offset: [0.08000, 0.00000]
     pick_offset: [0.07000, 0.00000]
     arm_joint_names: ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]

@@ -1,0 +1,4 @@
+# Allow the Kublab dashboard (locally or over SSH as unitree) to control only
+# the OM6DOF perception unit. Install as /etc/sudoers.d/om6dof-perception.
+unitree ALL=(root) NOPASSWD: /usr/bin/systemctl start om6dof-perception.service
+unitree ALL=(root) NOPASSWD: /usr/bin/systemctl stop om6dof-perception.service

@@ -11,18 +11,35 @@ def generate_launch_description():
             default_value="glass jar with a black lid on the floor",
         ),
         DeclareLaunchArgument(
-            "ee_description",
-            default_value="robot arm gripper with two fingers",
+            "target_class",
+            default_value="bottle",
         ),
         DeclareLaunchArgument(
-            "vlm_model", default_value="qwen3-vl:8b-instruct-q4_K_M"),
+            "ee_mode",
+            default_value="fixed_jaw_pixels",
+            description="fixed_jaw_pixels, yolo, or disabled",
+        ),
         DeclareLaunchArgument(
-            "ollama_url",
-            default_value="http://192.168.123.99:11434",
+            "ee_left_pixel", default_value="[200, 430]",
+        ),
+        DeclareLaunchArgument(
+            "ee_right_pixel", default_value="[540, 400]",
+        ),
+        DeclareLaunchArgument(
+            "yolo_model_path",
+            default_value=(
+                "/home/unitree/.cache/om6dof_perception/yolox_s.onnx"
+            ),
+        ),
+        DeclareLaunchArgument(
+            "yolo_confidence",
+            default_value="0.35",
         ),
         DeclareLaunchArgument(
             "web_stream_topic",
-            default_value="/application_web_monitor/image/compressed",
+            default_value=(
+                "/application_web_monitor/perception/image/compressed"
+            ),
         ),
         Node(
             package="om6dof_perception",
@@ -32,9 +49,12 @@ def generate_launch_description():
             parameters=[{
                 "target_description": LaunchConfiguration(
                     "target_description"),
-                "ee_description": LaunchConfiguration("ee_description"),
-                "vlm_model": LaunchConfiguration("vlm_model"),
-                "ollama_url": LaunchConfiguration("ollama_url"),
+                "target_class": LaunchConfiguration("target_class"),
+                "ee_mode": LaunchConfiguration("ee_mode"),
+                "ee_left_pixel": LaunchConfiguration("ee_left_pixel"),
+                "ee_right_pixel": LaunchConfiguration("ee_right_pixel"),
+                "yolo_model_path": LaunchConfiguration("yolo_model_path"),
+                "yolo_confidence": LaunchConfiguration("yolo_confidence"),
                 "web_stream_topic": LaunchConfiguration("web_stream_topic"),
                 "publish_debug_image": True,
             }],
