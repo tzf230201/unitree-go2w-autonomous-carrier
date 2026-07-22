@@ -39,6 +39,24 @@ The images below show the SLAM result and the real environment used in the exper
 | `go2w_joints_state_and_imu_publisher` | Joint states & IMU publisher for Go2W |
 | `go2w_cmd_vel_control` | Velocity control for Go2W |
 | `pointcloud_to_laserscan` | Convert 3D point cloud to 2D laser scan |
+| `om6dof_perception` | YOLOX + RealSense RGB-D detection, 3D bounding boxes, EoE distance, and web preview |
+| `om6dof_pick_and_place` | MoveIt pickup, visual tracking/searching, direct 3D approach, and automatic upper-surface fallback for low objects |
+
+## OM6DOF perception pickup
+
+The Kublab web monitor can start OM6DOF perception, select a YOLO target such
+as `bottle`, track it with the wrist camera, search low/medium/high views, and
+run a guarded pickup. Pickup approaches along the live three-dimensional
+EoE-to-object ray, re-centres pan/tilt at each standoff, and only then performs
+the final straight advance and grasp.
+
+When a low object's centre is outside the normal front-pick Z bound, the
+backend can use the upper surface of its YOLO 3D bounding box and descend from
+above. This fallback still enforces X/Y bounds, a minimum object Z, a minimum
+EoE Z, wrist-branch continuity, and a complete hover-to-grasp IK check.
+
+Detailed operation, services, safety behaviour, and tuning parameters are in
+[`om6dof_pick_and_place/README.md`](om6dof/om6dof_pick_and_place/README.md#perception-driven-direct-pickup).
 
 ## How to Use this Repo
 

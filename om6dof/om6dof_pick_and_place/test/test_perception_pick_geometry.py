@@ -3,6 +3,9 @@ import numpy as np
 from om6dof_pick_and_place.direct_pick_node import (
     DirectPickNode,
     approach_standoff_distances,
+    axis_aligned_bbox_top_world,
+    consecutive_detection_streak,
+    direct_approach_direction,
     image_axis_tracking_target,
     linear_waypoints,
     optical_point_to_world,
@@ -54,6 +57,39 @@ def test_linear_waypoints_advance_at_constant_height_and_bounded_step():
         previous = point
 
 
+def test_direct_approach_direction_includes_vertical_component():
+    direction = direct_approach_direction(
+        np.array([0.10, -0.05, 0.25]),
+        np.array([0.40, 0.10, 0.10]),
+    )
+    expected = np.array([0.30, 0.15, -0.15])
+    expected /= np.linalg.norm(expected)
+    assert np.allclose(direction, expected)
+    assert direction[2] < 0.0
+
+
+def test_bbox_top_world_uses_vertical_extent_after_rotation():
+    top = axis_aligned_bbox_top_world(
+        center_optical=np.array([0.0, 0.0, 0.40]),
+        size_optical=np.array([0.04, 0.10, 0.06]),
+        p_we=np.zeros(3),
+        R_we=np.eye(3),
+        t_ec=np.zeros(3),
+        R_eo=np.eye(3),
+    )
+    assert np.allclose(top, [0.0, 0.0, 0.43])
+
+
+def test_linear_waypoints_follow_diagonal_3d_ray():
+    start = np.array([0.10, 0.00, 0.25])
+    end = np.array([0.30, 0.10, 0.05])
+    points = linear_waypoints(start, end, max_step=0.04)
+    ray = end - start
+    for point in points:
+        progress = (point[0] - start[0]) / ray[0]
+        assert np.allclose(point, start + progress * ray)
+
+
 def test_visual_approach_distances_descend_and_end_at_final_standoff():
     assert np.allclose(
         approach_standoff_distances(0.16, 0.08, 0.04),
@@ -74,6 +110,13 @@ def test_adaptive_approach_skips_folded_near_base_waypoint():
             0.406, [0.16, 0.12, 0.08], minimum_target_radius=0.28),
         [0.12, 0.08],
     )
+
+
+def test_detection_streak_requires_strictly_consecutive_frames():
+    streak = 0
+    for detected in [True, True, False, True, True, True]:
+        streak = consecutive_detection_streak(streak, detected)
+    assert streak == 3
 
 
 def test_yaw_tracking_ignores_target_inside_deadband():

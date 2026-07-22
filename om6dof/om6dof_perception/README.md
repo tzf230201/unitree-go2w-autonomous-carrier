@@ -112,7 +112,21 @@ ros2 service call /direct_reachable std_srvs/srv/Trigger '{}'
 ros2 service call /run_perception_pick std_srvs/srv/Trigger '{}'
 ```
 
-Sequence: snapshot target -> reachability preflight -> ready -> gripper open ->
-standoff -> advance -> gripper close -> retreat/lift -> place -> release ->
-ready. The Kublab dashboard exposes the same guarded action as **Pickup
-object**. An unreachable target is rejected before any trajectory is sent.
+Sequence: initial pan/tilt lock -> ready/open -> direct 3D approach at
+16/12/8 cm fingertip standoffs -> pan/tilt re-lock after every movement ->
+short direct advance -> gripper close -> retreat/lift -> place -> release ->
+ready. The approach follows the live EoE-to-object XYZ ray and is not forced
+to stay horizontal.
+
+If only the lower world-Z safety bound is violated, the backend can switch to
+an upper-surface pick instead of rejecting the low object centre. It transforms
+the complete YOLO 3D bounding box into the arm world frame, selects its upper
+surface, validates a hover/pregrasp/grasp IK chain, then descends vertically.
+X/Y safety bounds and the configured minimum EoE height still apply. See
+[`om6dof_pick_and_place/README.md`](../om6dof_pick_and_place/README.md#automatic-upper-surfacetop-pick-fallback)
+for the full state machine and tuning parameters.
+
+The Kublab dashboard exposes the guarded action as **Pickup object**. It also
+provides **Start searching state**: joint1 sweeps centre/left/right at low,
+medium, and high joint5 views. Detection is accepted only after 10 consecutive
+frames; any lost frame resets the counter.

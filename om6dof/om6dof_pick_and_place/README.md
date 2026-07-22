@@ -264,6 +264,105 @@ ros2 launch om6dof_pick_and_place pick_place.launch.py \
 
 ---
 
+## Perception-driven direct pickup
+
+`direct_pick_node` is the runtime backend used by the **OM6DOF perception**
+card in the Kublab web monitor. It consumes the selected YOLO target from
+`/om6dof_perception/target_point`, the 3D bounding box from
+`/om6dof_perception/status`, and the current arm joints. The wrist-camera
+point is transformed into the arm `world` frame with FK and the calibrated
+camera extrinsic in [`config/tag_pick.yaml`](config/tag_pick.yaml).
+
+Before using **Pickup object**, start perception, set a target such as
+`bottle`, turn F3 remote arm control OFF, and clear the complete arm workspace.
+The direct picker runs this sequence:
+
+1. Move to a ready pose while preserving a safe camera pan/tilt.
+2. Open the gripper and centre the target in image X and Y.
+3. Approach along the live three-dimensional EoE-to-object ray. The path is
+   not forced to remain horizontal; low and high objects produce a sloped XYZ
+   path. Default fingertip standoffs are 16, 12, and 8 cm.
+4. Re-read depth and re-centre pan and tilt after every movement. A lost target
+   or unstable depth cluster aborts the sequence.
+5. At the final standoff, lock pan/tilt again, preserve the selected IK branch,
+   and reject wrist solutions that would turn the gripper upside down.
+6. Recompute the ray from the measured EoE pose, advance through short
+   straight waypoints, close the gripper, retreat, move to `place_pose`, and
+   release.
+
+### Automatic upper-surface/top-pick fallback
+
+The centre of a low object can be below the normal front-pick Z bound even
+though the object is reachable from above. This is common when the arm base is
+mounted above the floor. If **only** the lower Z bound is violated, the picker
+does not blindly enlarge the complete workspace:
+
+- X and Y must still be inside `perception_world_min/max`.
+- The object centre must be above `top_pick_object_min_z`.
+- A fresh YOLO 3D bounding box must be available.
+- The upper world-Z surface is calculated from the full optical-frame box
+  extent and the current wrist-camera rotation.
+- The fingertip target is converted to an EoE target using `pick_offset`, and
+  must remain above `top_pick_min_ee_z`.
+- One continuous hover → pregrasp → grasp IK chain must be valid before any
+  top-pick movement is sent.
+
+For the current OM6DOF geometry, an exact 180-degree wrist orientation is not
+IK-feasible at every bottle radius. `top_grasp_pitches` therefore starts at
+2.4 rad (about 137.5 degrees) and tries steeper fallbacks afterward. The EoE
+translation still descends vertically onto the upper surface. After grasping,
+the arm retreats vertically before carrying the object to the drop pose.
+
+Relevant configuration:
+
+```yaml
+auto_top_pick_enabled: true
+top_pick_object_min_z: -0.25
+top_pick_min_ee_z: -0.10
+top_pick_hover_m: 0.13
+top_pick_pregrasp_m: 0.05
+top_pick_retreat_m: 0.07
+top_approach_pitches: [2.0, 1.8, 2.2, 2.4]
+top_grasp_pitches: [2.4, 2.7, 2.9, 3.1416]
+```
+
+Do not lower the Z limits merely to suppress an abort. First verify the camera
+extrinsic, 3D-box overlay, physical support height, fingertip offset, and an IK
+solution. The top-pick fallback intentionally does not bypass lateral safety.
+
+### Object searching state
+
+The web button **Start searching state** calls `/direct_search`. The arm first
+moves to the safe ready pose, then scans:
+
+```
+low:    centre → left → right
+medium: centre → left → right
+high:   centre → left → right
+```
+
+Only joint1 (pan) and joint5 (tilt) are changed during the sweep. A target is
+reported as `FOUND` only after it appears with a valid 3D point in 10
+consecutive perception frames; one lost frame resets the streak to zero. Use
+**Stop searching** or `/direct_search_stop` to cancel. Live state and the
+`stable=N/10` counter are available through `/direct_search_status` and the
+web monitor.
+
+Direct-pick services:
+
+| Service | Purpose |
+|---|---|
+| `/run_perception_pick` | Run the guarded perception pickup sequence. |
+| `/direct_pick_status` | Current pickup step and transformed object point. |
+| `/direct_track` | Continuous joint1/joint5 target tracking. |
+| `/direct_stop` | Stop pickup or continuous tracking. |
+| `/direct_search` | Start the low/medium/high search sweep. |
+| `/direct_search_stop` | Cancel the search sweep. |
+| `/direct_search_status` | Search angle/state and consecutive-frame count. |
+| `/direct_reachable` | Report front-pick IK reachability for the live target. |
+
+---
+
 ## AprilTag pick (level-1 vision PoC)
 
 Two extra nodes make the *pick* side vision-driven while the place side

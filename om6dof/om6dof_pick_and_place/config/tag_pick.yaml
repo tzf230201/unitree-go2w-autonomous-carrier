@@ -200,7 +200,9 @@ direct_pick:
     front_standoff: 0.05        # maju ~5 cm (dulu 10 cm)
     front_approach_z_offset: 0.04
     front_grasp_back: 0.005
-    approach_offset: [0.08000, 0.00000]   # depan objek pada tinggi grasp; advance lurus
+    # [jarak fingertip ke object, koreksi Z]. Ray menuju object dihitung penuh
+    # dalam XYZ dari pose EoE saat ini; pendekatan tidak dipaksa horizontal.
+    approach_offset: [0.08000, 0.00000]
     pick_offset: [0.07000, 0.00000]     # [maju(+dalam), naik(+atas)] koreksi genggam
     front_pitch: 1.5708
     front_pitch_fallbacks: [1.5708, 1.65, 1.72, 1.8, 1.9, 2.0, 2.1, 2.2, 2.3, 2.4, 1.4, 1.2]
@@ -225,15 +227,34 @@ direct_pick:
     tracking_vertical_max_step_rad: 0.04
     tracking_joint5_min: -1.80
     tracking_joint5_max: 1.80
+    # Search state: lihat lantai/rendah dahulu, lalu medium, kemudian tinggi.
+    # Pada setiap level joint1 menyapu center → kiri → kanan.
+    search_required_frames: 10
+    search_pan_positions: [0.0, 0.70, -0.70]
+    search_tilt_positions: [1.45, 0.90, 0.35]
+    search_move_duration_s: 1.8
+    search_dwell_s: 1.0
     pickup_tracking_enabled: true
     pickup_tracking_timeout_s: 8.0
     pickup_tracking_stable_cycles: 3
     pickup_object_refresh_timeout_s: 2.0
     pickup_coarse_standoff_m: 0.16
     pickup_approach_step_m: 0.04
-    pickup_min_approach_radius_m: 0.28  # hindari link7-link4 terlipat dekat base
+    pickup_min_approach_radius_m: 0.28  # legacy; IK tiap waypoint kini menjadi guard
     pickup_optical_depth_min_m: 0.05
     pickup_optical_depth_max_m: 1.00
+    # Bila pusat object lebih rendah dari front-pick bounds, gunakan bagian
+    # atas 3D bbox dan turun dari atas. X/Y bounds tetap wajib aman.
+    auto_top_pick_enabled: true
+    top_pick_object_min_z: -0.25
+    top_pick_min_ee_z: -0.10
+    top_pick_hover_m: 0.13
+    top_pick_pregrasp_m: 0.05
+    top_pick_retreat_m: 0.07
+    # Peta IK arm ini tidak mencapai pitch pi pada radius bottle sekarang;
+    # pitch 2.4 rad adalah kandidat top-grasp feasible yang pertama.
+    top_approach_pitches: [2.0, 1.8, 2.2, 2.4]
+    top_grasp_pitches: [2.4, 2.7, 2.9, 3.1416]
     lift_after_grasp: 0.05
     min_z: -0.02             # world origin di atas meja; tetap ~7 cm di atas table
     ready_pose: [0.0, -0.6806, 1.3613, 0.0, 0.8901, 0.0]

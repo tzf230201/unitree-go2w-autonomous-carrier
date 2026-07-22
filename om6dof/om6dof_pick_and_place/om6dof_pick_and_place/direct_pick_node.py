@@ -24,10 +24,14 @@ Services:
    /run_direct_pick   std_srvs/Trigger  — run the full sequence
    /direct_approach    std_srvs/Trigger  — steps 1-3 only (approach, no grasp)
    /direct_pick_status std_srvs/Trigger  — report current step / object pose
+   /direct_search      std_srvs/Trigger  — sweep low/medium/high for target
+   /direct_search_stop std_srvs/Trigger  — stop the active search sweep
+   /direct_search_status std_srvs/Trigger — report angle and detection streak
 """
 
 from __future__ import annotations
 
+import json
 import math
 import threading
 import time
@@ -103,6 +107,29 @@ def linear_waypoints(start, end, max_step: float):
             for index in range(1, count + 1)]
 
 
+def direct_approach_direction(current_ee, object_position):
+    """Unit XYZ ray from the current end effector toward the object."""
+    delta = (np.asarray(object_position, dtype=float)
+             - np.asarray(current_ee, dtype=float))
+    norm = float(np.linalg.norm(delta))
+    if norm <= 1e-6:
+        return np.array([1.0, 0.0, 0.0])
+    return delta / norm
+
+
+def axis_aligned_bbox_top_world(center_optical, size_optical, p_we, R_we,
+                                t_ec, R_eo):
+    """Upper world-Z centre of an optical-frame axis-aligned 3D box."""
+    center = optical_point_to_world(
+        np.asarray(center_optical, dtype=float), p_we, R_we, t_ec, R_eo)
+    half = 0.5 * np.asarray(size_optical, dtype=float)
+    R_wo = np.asarray(R_we) @ np.asarray(R_eo)
+    vertical_half_extent = float(np.sum(np.abs(R_wo[2, :]) * half))
+    top = np.asarray(center, dtype=float)
+    top[2] += vertical_half_extent
+    return top
+
+
 def approach_standoff_distances(coarse: float, final: float, step: float):
     """Descending visual-approach distances, always ending at ``final``."""
     coarse = max(float(coarse), float(final))
@@ -130,6 +157,11 @@ def safe_approach_standoff_distances(object_radius: float, distances,
     minimum = max(0.0, float(minimum_target_radius))
     return [float(distance) for distance in distances
             if radius - float(distance) >= minimum - 1e-9]
+
+
+def consecutive_detection_streak(current: int, detected: bool) -> int:
+    """Count strictly consecutive detection frames."""
+    return int(current) + 1 if bool(detected) else 0
 
 
 def image_axis_tracking_target(current_joint: float, optical_axis: float,
@@ -248,9 +280,16 @@ class DirectPickNode(Node):
         self.declare_parameter("tracking_vertical_max_step_rad", 0.04)
         self.declare_parameter("tracking_joint5_min", -1.80)
         self.declare_parameter("tracking_joint5_max", 1.80)
+        # Search-only scan: low/floor view first, then medium and high.  The
+        # D405 mount looks lower as joint5 increases. Joint1 positive is left.
+        self.declare_parameter("search_required_frames", 10)
+        self.declare_parameter("search_pan_positions", [0.0, 0.70, -0.70])
+        self.declare_parameter("search_tilt_positions", [1.45, 0.90, 0.35])
+        self.declare_parameter("search_move_duration_s", 1.8)
+        self.declare_parameter("search_dwell_s", 1.0)
         # Pickup interleaves visual centering and short approach moves. It
         # starts farther away, refreshes the 3D target after each step, then
-        # performs a final horizontal lock before align/advance/grasp.
+        # performs a final pan-tilt lock before align/direct advance/grasp.
         self.declare_parameter("pickup_tracking_enabled", True)
         self.declare_parameter("pickup_tracking_timeout_s", 8.0)
         self.declare_parameter("pickup_tracking_stable_cycles", 3)
@@ -260,6 +299,16 @@ class DirectPickNode(Node):
         self.declare_parameter("pickup_min_approach_radius_m", 0.28)
         self.declare_parameter("pickup_optical_depth_min_m", 0.05)
         self.declare_parameter("pickup_optical_depth_max_m", 1.00)
+        # A low object may have its centre below the front-pick safety box
+        # while its upper surface is still reachable from above.
+        self.declare_parameter("auto_top_pick_enabled", True)
+        self.declare_parameter("top_pick_object_min_z", -0.25)
+        self.declare_parameter("top_pick_min_ee_z", -0.10)
+        self.declare_parameter("top_pick_hover_m", 0.13)
+        self.declare_parameter("top_pick_pregrasp_m", 0.05)
+        self.declare_parameter("top_pick_retreat_m", 0.07)
+        self.declare_parameter("top_approach_pitches", [2.0, 1.8, 2.2, 2.4])
+        self.declare_parameter("top_grasp_pitches", [2.4, 2.7, 2.9, 3.1416])
         self.declare_parameter("lift_after_grasp", 0.05)
         # The arm base/world origin is above the supporting surface on this
         # rig. A detected object centre around z=-0.04 m is valid; clamp the
@@ -289,6 +338,7 @@ class DirectPickNode(Node):
         # ---- state ----
         self._samples: deque = deque(maxlen=60)     # (t, p_opt, q_opt)
         self._perception_samples: deque = deque(maxlen=60)  # (t, p_opt)
+        self._perception_bbox_optical = None  # (time, center, size)
         self.object_source = str(
             self.get_parameter("object_source").value
         ).strip().lower()
@@ -298,9 +348,19 @@ class DirectPickNode(Node):
         self._status_line = "ready"
         self._run_lock = threading.Lock()
         self._busy = False
+        self._pickup_mode = False
         self._tracking_mode = False
+        self._search_mode = False
         self._cancel = threading.Event()
         self._worker_thread: Optional[threading.Thread] = None
+        self._search_state_lock = threading.Lock()
+        self._search_detection_streak = 0
+        self._search_target_description = "object"
+        self._search_status_line = "search has not run"
+        self._active_pick_mode = "front"
+        self._top_grasp_point = None
+        self._top_retreat_point = None
+        self._top_grasp_R = None
         cb = ReentrantCallbackGroup()
 
         # ---- IO ----
@@ -316,6 +376,9 @@ class DirectPickNode(Node):
         )
         self.create_subscription(
             JointState, "/joint_states", self._on_joints, 10, callback_group=cb)
+        self.create_subscription(
+            String, "/om6dof_perception/status",
+            self._on_perception_status, 10, callback_group=cb)
         self.client = MoveItClient(
             self,
             arm_joint_names=self.arm_joints,
@@ -333,6 +396,11 @@ class DirectPickNode(Node):
             JointTrajectory, "/arm_controller/joint_trajectory", 10)
         self._tracking_status_pub = self.create_publisher(
             String, "/direct_tracking_status",
+            QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                       durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                       history=HistoryPolicy.KEEP_LAST))
+        self._search_status_pub = self.create_publisher(
+            String, "/direct_search_status",
             QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                        durability=DurabilityPolicy.TRANSIENT_LOCAL,
                        history=HistoryPolicy.KEEP_LAST))
@@ -367,6 +435,12 @@ class DirectPickNode(Node):
                             callback_group=cb)
         self.create_service(Trigger, "/direct_track", self._on_track,
                             callback_group=cb)
+        self.create_service(Trigger, "/direct_search", self._on_search,
+                            callback_group=cb)
+        self.create_service(Trigger, "/direct_search_stop",
+                            self._on_search_stop, callback_group=cb)
+        self.create_service(Trigger, "/direct_search_status",
+                            self._on_search_status, callback_group=cb)
         self.create_service(Trigger, "/direct_stop", self._on_stop,
                             callback_group=cb)
         self.create_service(Trigger, "/direct_reachable", self._on_reachable,
@@ -391,6 +465,33 @@ class DirectPickNode(Node):
 
     def _on_joints(self, msg: JointState) -> None:
         self._joints = dict(zip(msg.name, msg.position))
+
+    def _on_perception_status(self, msg: String) -> None:
+        """Use perception's per-frame status for a strict detection streak."""
+        try:
+            payload = json.loads(msg.data)
+            target = payload.get("target") or {}
+            description = str(
+                target.get("desc") or target.get("class") or "object")
+            detected = (target.get("state") == "tracking"
+                        and target.get("point") is not None)
+            bbox = target.get("bbox3d") or {}
+            bbox_center = np.asarray(bbox.get("center"), dtype=float)
+            bbox_size = np.asarray(bbox.get("size"), dtype=float)
+            if (bbox_center.shape == (3,) and bbox_size.shape == (3,)
+                    and np.all(np.isfinite(bbox_center))
+                    and np.all(np.isfinite(bbox_size))
+                    and np.all(bbox_size > 0.0)):
+                self._perception_bbox_optical = (
+                    time.monotonic(), bbox_center, bbox_size)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            description = "object"
+            detected = False
+        with self._search_state_lock:
+            self._search_target_description = description
+            if self._search_mode:
+                self._search_detection_streak = consecutive_detection_streak(
+                    self._search_detection_streak, detected)
 
     # ---------------- geometry ----------------
     def _arm_q(self) -> Optional[np.ndarray]:
@@ -476,6 +577,20 @@ class DirectPickNode(Node):
             return self._perception_object_world(allow_stale)
         return self._tag_object_world(allow_stale)
 
+    def _perception_bbox_top_world(self):
+        """Latest YOLO 3D-box upper surface in arm/world coordinates."""
+        bbox = self._perception_bbox_optical
+        q = self._arm_q()
+        if bbox is None or q is None:
+            return None
+        stamp, center, size = bbox
+        if time.monotonic() - stamp > float(
+                self.get_parameter("max_sample_age").value):
+            return None
+        p_we, R_we = self.ik.fk_pose(q)
+        return axis_aligned_bbox_top_world(
+            center, size, p_we, R_we, self._t_ec, self._R_eo)
+
     def _approach_geom(self):
         """Effective (standoff, up) — from approach_offset if set, else the
         legacy front_standoff / front_approach_z_offset scalars."""
@@ -498,12 +613,6 @@ class DirectPickNode(Node):
         yaw = math.atan2(obj_w[1], obj_w[0]) + \
             float(self.get_parameter("yaw_offset").value)
         min_z = float(self.get_parameter("min_z").value)
-        bearing = self._bearing(obj_w)
-        stand = obj_w - standoff * bearing
-        stand[2] = max(obj_w[2] + zoff, min_z)
-        grasp = self._ee_for_gripper(obj_w.copy(), bearing)
-        grasp[2] = max(grasp[2], min_z)
-
         def ik_solve(seed, pos, R):
             q_sol, conv = self.ik.solve_pose_ik(seed, pos, R)
             p2, R2 = self.ik.fk_pose(np.array(q_sol))
@@ -525,6 +634,10 @@ class DirectPickNode(Node):
         seed = np.asarray(q) if seed_from_current else ready
         if len(seed) != len(self.arm_joints):
             seed = np.asarray(q)
+        bearing, stand, grasp = self._direct_approach_points(
+            obj_w, standoff, seed, zoff=zoff)
+        stand[2] = max(stand[2], min_z)
+        grasp[2] = max(grasp[2], min_z)
         pitches = [float(self.get_parameter("front_pitch").value)]
         pitches.extend(float(value) for value in
                        self.get_parameter("front_pitch_fallbacks").value)
@@ -561,18 +674,118 @@ class DirectPickNode(Node):
             # inverted wrist branch.
             "stand_q": selected_stand_q,
             "grasp_q": selected_grasp_q,
+            "bearing": bearing,
+            "stand_point": stand,
+            "grasp_point": grasp,
         }
 
-    def _bearing(self, obj_w: np.ndarray) -> np.ndarray:
-        """Unit horizontal direction base→object = the approach direction."""
-        d = np.array([obj_w[0], obj_w[1], 0.0])
-        n = np.linalg.norm(d)
-        return d / n if n > 1e-6 else np.array([1.0, 0.0, 0.0])
+    def _direct_approach_points(self, obj_w: np.ndarray, standoff: float,
+                                joints: np.ndarray, zoff: float = 0.0):
+        """Return ray, standoff EE point, and grasp EE point.
 
-    def _front_target(self, obj_w: np.ndarray, back: float) -> np.ndarray:
-        d = self._bearing(obj_w)
-        return np.array([obj_w[0] - back * d[0],
-                         obj_w[1] - back * d[1], obj_w[2]])
+        ``standoff`` is the desired object-to-fingertip gap. Both targets lie
+        on the live three-dimensional EoE→object ray, so low/high objects are
+        approached diagonally instead of forcing a horizontal world-Z path.
+        """
+        current_ee, _current_R = self.ik.fk_pose(np.asarray(joints))
+        direction = direct_approach_direction(current_ee, obj_w)
+        hover_grip = np.asarray(obj_w, dtype=float) - float(standoff) * direction
+        hover_grip[2] += float(zoff)
+        stand = self._ee_for_gripper(hover_grip, direction)
+        grasp = self._ee_for_gripper(np.asarray(obj_w, dtype=float), direction)
+        return direction, stand, grasp
+
+    def _ik_pose_candidate(self, seed, pos, R):
+        solution, _converged = self.ik.solve_pose_ik(seed, pos, R)
+        reached_pos, reached_R = self.ik.fk_pose(np.asarray(solution))
+        position_error = float(np.linalg.norm(reached_pos - pos))
+        trace = float(np.trace(reached_R.T @ R))
+        orientation_error = math.acos(float(np.clip(
+            (trace - 1.0) * 0.5, -1.0, 1.0)))
+        return np.asarray(solution), position_error, orientation_error
+
+    def _select_top_pick_solution(self, top_world: np.ndarray):
+        """Find one continuous hover→pregrasp→top-grasp IK chain."""
+        seed = self._arm_q()
+        if seed is None:
+            return None
+        yaw = math.atan2(top_world[1], top_world[0]) + float(
+            self.get_parameter("yaw_offset").value)
+        down = np.array([0.0, 0.0, -1.0])
+        grasp = self._ee_for_gripper(np.asarray(top_world), down)
+        grasp[2] = max(grasp[2], float(self.get_parameter(
+            "top_pick_min_ee_z").value))
+        pregrasp = grasp + np.array([0.0, 0.0, float(
+            self.get_parameter("top_pick_pregrasp_m").value)])
+        hover = grasp + np.array([0.0, 0.0, float(
+            self.get_parameter("top_pick_hover_m").value)])
+        best = None
+        for approach_pitch in self.get_parameter(
+                "top_approach_pitches").value:
+            approach_R = rpy_pose(float(approach_pitch), yaw)
+            q_hover, ep_h, eo_h = self._ik_pose_candidate(
+                seed, hover, approach_R)
+            q_pre, ep_p, eo_p = self._ik_pose_candidate(
+                q_hover, pregrasp, approach_R)
+            if max(ep_h, ep_p) >= 0.02 or max(eo_h, eo_p) >= 0.20:
+                continue
+            for grasp_pitch in self.get_parameter(
+                    "top_grasp_pitches").value:
+                grasp_R = rpy_pose(float(grasp_pitch), yaw)
+                q_align, ep_a, eo_a = self._ik_pose_candidate(
+                    q_pre, pregrasp, grasp_R)
+                q_grasp, ep_g, eo_g = self._ik_pose_candidate(
+                    q_align, grasp, grasp_R)
+                if max(ep_a, ep_g) >= 0.02 or max(eo_a, eo_g) >= 0.20:
+                    continue
+                roll_delta = max(
+                    abs(float(q_align[3] - q_pre[3])),
+                    abs(float(q_align[5] - q_pre[5])),
+                    abs(float(q_grasp[3] - q_align[3])),
+                    abs(float(q_grasp[5] - q_align[5])),
+                )
+                if roll_delta > 0.90:
+                    continue
+                score = (ep_h + ep_p + ep_a + ep_g
+                         + 0.2 * (eo_h + eo_p + eo_a + eo_g))
+                candidate = (score, hover, pregrasp, grasp,
+                             approach_R, grasp_R, q_align,
+                             float(approach_pitch), float(grasp_pitch))
+                if best is None or score < best[0]:
+                    best = candidate
+        return best
+
+    def _top_approach_after_center(self, obj_w: np.ndarray,
+                                   top_world: np.ndarray):
+        selected = self._select_top_pick_solution(top_world)
+        if selected is None:
+            self._status_line = (
+                "pickup aborted — low target, but no safe top-pick IK chain")
+            self.get_logger().error(self._status_line)
+            return False
+        (_score, hover, pregrasp, grasp, approach_R, grasp_R, q_align,
+         approach_pitch, grasp_pitch) = selected
+        self.get_logger().info(
+            "auto TOP pick: centre below front safety bound; "
+            f"bbox top={top_world.tolist()}, hover pitch="
+            f"{math.degrees(approach_pitch):.1f}°, grasp pitch="
+            f"{math.degrees(grasp_pitch):.1f}°")
+        if not self._send_continuous_pose(
+                hover, approach_R, "top hover above object"):
+            return False
+        if not self._send_continuous_pose(
+                pregrasp, approach_R, "top pregrasp"):
+            return False
+        if not self._send_joint_pose(q_align, "align upper-surface grasp"):
+            return False
+        self._active_pick_mode = "top"
+        self._top_grasp_point = np.asarray(grasp)
+        self._top_retreat_point = np.asarray(grasp) + np.array(
+            [0.0, 0.0, float(self.get_parameter(
+                "top_pick_retreat_m").value)])
+        self._top_grasp_R = np.asarray(grasp_R)
+        return True, obj_w, math.atan2(obj_w[1], obj_w[0]), \
+            grasp_pitch, grasp_R
 
     def _ee_for_gripper(self, grip_pos: np.ndarray,
                         bearing: np.ndarray) -> np.ndarray:
@@ -724,7 +937,6 @@ class DirectPickNode(Node):
         pitches = list(dict.fromkeys(
             round(value, 6) for value in pitches if 0.0 <= value <= pitch_max
         ))
-        bearing = self._bearing(obj_w)
         candidates = []
         for pitch in pitches:
             R = rpy_pose(pitch, yaw)
@@ -733,8 +945,9 @@ class DirectPickNode(Node):
             worst_ori = 0.0
             valid = True
             for distance in distances:
-                target = obj_w - float(distance) * bearing
-                target[2] = max(obj_w[2] + zoff, min_z)
+                _direction, target, _grasp = self._direct_approach_points(
+                    obj_w, float(distance), q_stage, zoff=zoff)
+                target[2] = max(target[2], min_z)
                 solution, _conv = self.ik.solve_pose_ik(q_stage, target, R)
                 reached_pos, reached_R = self.ik.fk_pose(
                     np.asarray(solution))
@@ -893,6 +1106,10 @@ class DirectPickNode(Node):
 
     # ---------------- sequence ----------------
     def _approach_only(self) -> bool:
+        self._active_pick_mode = "front"
+        self._top_grasp_point = None
+        self._top_retreat_point = None
+        self._top_grasp_R = None
         standoff, zoff = self._approach_geom()
         min_z = float(self.get_parameter("min_z").value)
         tracked_pick = bool(self.get_parameter(
@@ -948,6 +1165,27 @@ class DirectPickNode(Node):
             return False
         obj_w = found[1]
         if not self._object_within_safety_bounds(obj_w):
+            lower = np.asarray(self.get_parameter(
+                "perception_world_min").value, dtype=float)
+            upper = np.asarray(self.get_parameter(
+                "perception_world_max").value, dtype=float)
+            lateral_safe = bool(
+                lower[0] <= obj_w[0] <= upper[0]
+                and lower[1] <= obj_w[1] <= upper[1])
+            low_only = bool(obj_w[2] < lower[2] and obj_w[2] <= upper[2])
+            top_world = self._perception_bbox_top_world()
+            top_allowed = bool(
+                self.object_source == "perception"
+                and self.get_parameter("auto_top_pick_enabled").value
+                and lateral_safe and low_only
+                and obj_w[2] >= float(self.get_parameter(
+                    "top_pick_object_min_z").value)
+                and top_world is not None)
+            if top_allowed:
+                self._status_line = (
+                    "low object centre — switching to upper-surface top pick")
+                self.get_logger().warn(self._status_line)
+                return self._top_approach_after_center(obj_w, top_world)
             self._status_line = (
                 "pickup aborted — tracked object outside safety bounds "
                 f"{[round(float(value), 3) for value in obj_w]}"
@@ -964,22 +1202,6 @@ class DirectPickNode(Node):
                 standoff,
                 float(self.get_parameter("pickup_approach_step_m").value),
             )
-            raw_distances = list(distances)
-            distances = safe_approach_standoff_distances(
-                float(np.hypot(obj_w[0], obj_w[1])), distances,
-                float(self.get_parameter(
-                    "pickup_min_approach_radius_m").value),
-            )
-            if not distances:
-                self._status_line = (
-                    "pickup aborted — no collision-safe approach radius")
-                self.get_logger().error(self._status_line)
-                return False
-            skipped = len(raw_distances) - len(distances)
-            if skipped:
-                self.get_logger().info(
-                    f"adaptive approach skipped {skipped} folded waypoint(s); "
-                    f"using {[round(value, 3) for value in distances]} m")
             locked_orientation = self._select_locked_approach_orientation(
                 obj_w, distances)
             if locked_orientation is None:
@@ -989,21 +1211,26 @@ class DirectPickNode(Node):
                 return False
             approach_pitch, approach_R = locked_orientation
             self._status_line = (
-                f"approach orientation locked at "
+                f"direct 3D approach orientation locked at "
                 f"{math.degrees(approach_pitch):.1f}°")
             for index, distance in enumerate(distances, start=1):
-                bearing = self._bearing(obj_w)
-                target = obj_w - distance * bearing
-                target[2] = max(obj_w[2] + zoff, min_z)
+                current_q = self._arm_q()
+                if current_q is None:
+                    self._status_line = (
+                        "pickup aborted — joint state lost during approach")
+                    return False
+                _direction, target, _grasp = self._direct_approach_points(
+                    obj_w, distance, current_q, zoff=zoff)
+                target[2] = max(target[2], min_z)
                 if not self._send_continuous_pose(
                         target, approach_R,
-                        f"tracked approach {index}/{len(distances)} "
+                        f"direct 3D approach {index}/{len(distances)} "
                         f"({distance*100:.0f} cm)"):
                     return False
-                final_stage = index == len(distances)
                 if not self._visual_center(
-                        horizontal_only=final_stage,
-                        label=("final left-right lock" if final_stage
+                        horizontal_only=False,
+                        label=("final pan-tilt lock"
+                               if index == len(distances)
                                else f"re-track {index}/{len(distances)}")):
                     return False
                 found = self._wait_fresh_object(refresh_timeout)
@@ -1021,7 +1248,7 @@ class DirectPickNode(Node):
                     self.get_logger().error(self._status_line)
                     return False
 
-        # Final pose is calculated only after the close-range left-right lock.
+        # Final pose is calculated only after the close-range pan-tilt lock.
         reach = self._reachable(obj_w, seed_from_current=tracked_pick)
         if reach is None or not reach["reachable"]:
             detail = "no joint state" if reach is None else str(reach)
@@ -1032,9 +1259,7 @@ class DirectPickNode(Node):
         pitch = float(reach["pitch"])
         yaw = math.atan2(obj_w[1], obj_w[0]) + \
             float(self.get_parameter("yaw_offset").value)
-        bearing = self._bearing(obj_w)
-        stand = obj_w - standoff * bearing
-        stand[2] = max(obj_w[2] + zoff, min_z)
+        stand = np.asarray(reach["stand_point"], dtype=float)
         if not self._send_position_preserve_orientation(
                 stand, "final pre-position"):
             return False
@@ -1071,22 +1296,33 @@ class DirectPickNode(Node):
 
         min_z = float(self.get_parameter("min_z").value)
         lift = float(self.get_parameter("lift_after_grasp").value)
-        standoff, zoff = self._approach_geom()
-        bearing = self._bearing(obj_w)
+        current_q = self._arm_q()
+        if current_q is None:
+            self._status_line = "pickup aborted — final joint state unavailable"
+            self.get_logger().error(self._status_line)
+            return False
+        advance_start, _current_R = self.ik.fk_pose(
+            np.asarray(current_q, dtype=float))
+        top_pick = self._active_pick_mode == "top"
+        bearing = (np.array([0.0, 0.0, -1.0]) if top_pick
+                   else direct_approach_direction(advance_start, obj_w))
 
         # Stage 3 — ADVANCE (grasp): here — and ONLY here — apply pick_offset so the
         # fingertip lands on the object. _ee_for_gripper puts the GRIPPER at
         # the object centre by offsetting the EE command by pick_offset.
-        grasp_pt = self._ee_for_gripper(obj_w.copy(), bearing)
-        grasp_pt[2] = max(grasp_pt[2], min_z)
-        stand = obj_w - standoff * bearing
-        stand[2] = max(obj_w[2] + zoff, min_z)
+        if top_pick:
+            grasp_pt = np.asarray(self._top_grasp_point, dtype=float)
+            R = np.asarray(self._top_grasp_R, dtype=float)
+        else:
+            grasp_pt = self._ee_for_gripper(obj_w.copy(), bearing)
+            grasp_pt[2] = max(grasp_pt[2], min_z)
         step = float(self.get_parameter("advance_step_m").value)
-        waypoints = linear_waypoints(stand, grasp_pt, step)
+        waypoints = linear_waypoints(advance_start, grasp_pt, step)
         for index, waypoint in enumerate(waypoints, start=1):
             if not self._send_continuous_pose(
                     waypoint, R,
-                    f"advance straight {index}/{len(waypoints)}",
+                    ((f"top descend {index}/{len(waypoints)}") if top_pick
+                     else f"final direct advance {index}/{len(waypoints)}"),
                     max_joint_delta=0.55):
                 return False
         if not self._gripper("close", "CLOSE — gripping object"):
@@ -1100,9 +1336,16 @@ class DirectPickNode(Node):
         # joint-space place pose, which is always reachable.
         if self._cancel.is_set():
             return False
-        back = obj_w - standoff * bearing
-        back[2] = max(obj_w[2] + zoff + lift, min_z)
-        if not self._send_cart(back, R, "retreat+lift"):
+        if top_pick:
+            back = np.asarray(self._top_retreat_point, dtype=float)
+        else:
+            back = np.asarray(advance_start, dtype=float).copy()
+            back[2] = max(back[2] + lift, min_z)
+        retreat_ok = (
+            self._send_continuous_pose(back, R, "top retreat")
+            if top_pick else self._send_cart(back, R, "retreat+lift")
+        )
+        if not retreat_ok:
             self.get_logger().warn(
                 "retreat infeasible — going straight to place (still holding)")
 
@@ -1217,6 +1460,119 @@ class DirectPickNode(Node):
                 self._busy = False
                 self._tracking_mode = False
 
+    def _set_search_status(self, text: str) -> None:
+        with self._search_state_lock:
+            self._search_status_line = str(text)
+        self._status_line = str(text)
+        self._search_status_pub.publish(String(data=str(text)))
+
+    def _search_snapshot(self):
+        with self._search_state_lock:
+            return (int(self._search_detection_streak),
+                    str(self._search_target_description),
+                    str(self._search_status_line))
+
+    def _search_worker(self) -> None:
+        """Sweep low, medium and high views until 10 consecutive detections."""
+        required = max(1, int(self.get_parameter(
+            "search_required_frames").value))
+        move_duration = max(0.2, float(self.get_parameter(
+            "search_move_duration_s").value))
+        dwell = max(0.0, float(self.get_parameter(
+            "search_dwell_s").value))
+        pans = [float(value) for value in self.get_parameter(
+            "search_pan_positions").value]
+        tilts = [float(value) for value in self.get_parameter(
+            "search_tilt_positions").value]
+        level_names = ["low", "medium", "high"]
+        pan_names = ["center", "left", "right"]
+        final_result = None
+        try:
+            ready = np.asarray(
+                self.get_parameter("ready_pose").value, dtype=float)
+            if len(ready) != len(self.arm_joints) or self._arm_q() is None:
+                final_result = "failed: joint state/ready pose unavailable"
+                return
+            self._set_search_status(
+                f"preparing search — need {required} consecutive frames")
+            if not self._send_joint_pose(ready, "search ready pose"):
+                final_result = "failed: could not reach safe search pose"
+                return
+
+            for level_index, tilt in enumerate(tilts):
+                level = (level_names[level_index]
+                         if level_index < len(level_names)
+                         else f"level-{level_index + 1}")
+                for pan_index, pan in enumerate(pans):
+                    if self._cancel.is_set():
+                        final_result = "stopped: search cancelled"
+                        return
+                    streak, target, _status = self._search_snapshot()
+                    if streak >= required:
+                        final_result = (
+                            f"FOUND {target}: stable {streak}/{required} "
+                            f"before {level} scan")
+                        return
+                    direction = (pan_names[pan_index]
+                                 if pan_index < len(pan_names)
+                                 else f"pan-{pan_index + 1}")
+                    current = self._arm_q()
+                    if current is None:
+                        final_result = "failed: joint state lost during search"
+                        return
+                    command = np.asarray(current, dtype=float)
+                    command[0] = float(np.clip(
+                        pan,
+                        float(self.get_parameter(
+                            "tracking_joint1_min").value),
+                        float(self.get_parameter(
+                            "tracking_joint1_max").value)))
+                    command[4] = float(np.clip(
+                        tilt,
+                        float(self.get_parameter(
+                            "tracking_joint5_min").value),
+                        float(self.get_parameter(
+                            "tracking_joint5_max").value)))
+                    self._set_search_status(
+                        f"searching {level}-{direction}: "
+                        f"stable {streak}/{required}")
+                    self._publish_arm_trajectory(command, move_duration)
+                    deadline = time.monotonic() + move_duration + dwell
+                    while rclpy.ok() and time.monotonic() < deadline:
+                        if self._cancel.is_set():
+                            final_result = "stopped: search cancelled"
+                            return
+                        streak, target, _status = self._search_snapshot()
+                        self._set_search_status(
+                            f"searching {level}-{direction}: "
+                            f"stable {min(streak, required)}/{required}")
+                        if streak >= required:
+                            current = self._arm_q()
+                            if current is not None:
+                                self._publish_arm_trajectory(
+                                    np.asarray(current, dtype=float), 0.10)
+                            final_result = (
+                                f"FOUND {target}: stable {streak}/{required} "
+                                f"at {level}-{direction}")
+                            return
+                        time.sleep(0.10)
+            final_result = (
+                f"NOT FOUND: scanned low/medium/high, "
+                f"need {required} consecutive frames")
+            # Return to a predictable neutral view after a complete miss.
+            self._send_joint_pose(ready, "search return ready")
+        finally:
+            current = self._arm_q()
+            if current is not None:
+                self._publish_arm_trajectory(np.asarray(current), 0.10)
+            if final_result is None:
+                final_result = "stopped: search ended"
+            self._set_search_status(final_result)
+            self.get_logger().info(final_result)
+            with self._run_lock:
+                self._busy = False
+                self._search_mode = False
+
     def _publish_arm_trajectory(self, positions: np.ndarray,
                                 duration_s: Optional[float] = None) -> None:
         """Publish a full six-joint target while the trajectory controller owns the arm."""
@@ -1277,6 +1633,7 @@ class DirectPickNode(Node):
         finally:
             with self._run_lock:
                 self._busy = False
+                self._pickup_mode = False
 
     def _start(self, approach_only: bool) -> bool:
         if not self._preempt():
@@ -1285,6 +1642,7 @@ class DirectPickNode(Node):
             if self._busy:
                 return False
             self._busy = True
+            self._pickup_mode = True
             self._tracking_mode = False
             self._cancel.clear()
         self._worker_thread = threading.Thread(
@@ -1386,6 +1744,7 @@ class DirectPickNode(Node):
                 res.message = "arm busy; stop pickup/tracking first"
                 return res
             self._busy = True
+            self._pickup_mode = False
             self._tracking_mode = True
             self._cancel.clear()
         self._worker_thread = threading.Thread(
@@ -1393,6 +1752,66 @@ class DirectPickNode(Node):
         self._worker_thread.start()
         res.success = True
         res.message = "pan-tilt object tracking started (joint1 + joint5)"
+        return res
+
+    def _on_search(self, req, res):
+        if self.object_source != "perception":
+            res.success = False
+            res.message = "search requires object_source=perception"
+            return res
+        if self._arm_q() is None:
+            res.success = False
+            res.message = "search rejected: joint state unavailable"
+            return res
+        with self._run_lock:
+            if self._busy:
+                res.success = False
+                res.message = "arm busy; stop pickup/tracking/search first"
+                return res
+            self._busy = True
+            self._pickup_mode = False
+            self._tracking_mode = False
+            self._search_mode = True
+            self._cancel.clear()
+        with self._search_state_lock:
+            self._search_detection_streak = 0
+            self._search_status_line = "starting search"
+        self._search_status_pub.publish(String(data="starting search"))
+        self._worker_thread = threading.Thread(
+            target=self._search_worker, daemon=True)
+        self._worker_thread.start()
+        required = max(1, int(self.get_parameter(
+            "search_required_frames").value))
+        res.success = True
+        res.message = (
+            f"search started: low → medium → high, "
+            f"requires {required} consecutive frames")
+        return res
+
+    def _on_search_stop(self, req, res):
+        with self._run_lock:
+            active = bool(self._busy and self._search_mode)
+        if not active:
+            res.success = True
+            res.message = "search already inactive"
+            return res
+        stopped = self._preempt()
+        res.success = stopped
+        res.message = (
+            "search stopped" if stopped
+            else "search cancel requested; motion is still finishing")
+        return res
+
+    def _on_search_status(self, req, res):
+        streak, target, status = self._search_snapshot()
+        required = max(1, int(self.get_parameter(
+            "search_required_frames").value))
+        with self._run_lock:
+            active = bool(self._busy and self._search_mode)
+        res.success = active
+        res.message = (
+            f"{'active' if active else 'inactive'}: {status}; "
+            f"target={target}; stable={min(streak, required)}/{required}")
         return res
 
     def _on_stop(self, req, res):
@@ -1460,6 +1879,7 @@ class DirectPickNode(Node):
             if self._busy:
                 return False
             self._busy = True
+            self._pickup_mode = False
             self._cancel.clear()
         self._worker_thread = threading.Thread(
             target=self._go_pose_worker, args=(pose, label), daemon=True)
@@ -1495,7 +1915,11 @@ class DirectPickNode(Node):
         found = self._object_world()
         obj = "no object" if found is None else \
             f"object=({found[1][0]:+.3f},{found[1][1]:+.3f},{found[1][2]:+.3f})"
-        res.success = True
+        with self._run_lock:
+            # This service is polled by the pickup button. Tracking/searching
+            # may share _status_line and _busy, but must not masquerade as an
+            # active pickup in the web UI.
+            res.success = bool(self._busy and self._pickup_mode)
         res.message = f"step: {self._status_line} | {obj}"
         return res
 
